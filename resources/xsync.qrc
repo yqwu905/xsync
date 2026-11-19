@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/app.svg</file>
+        <file>icons/folder.svg</file>
+        <file>icons/folder_up.svg</file>
+        <file>icons/file.svg</file>
+        <file>icons/file_code.svg</file>
+        <file>icons/file_archive.svg</file>
+        <file>icons/file_image.svg</file>
+        <file>icons/symlink.svg</file>
+        <file>icons/server.svg</file>
+        <file>icons/computer.svg</file>
+        <file>styles/dark.qss</file>
+        <file>styles/light.qss</file>
+    </qresource>
+</RCC>

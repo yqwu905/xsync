@@ -1,0 +1,17 @@
+build/
+build-*/
+dist/
+out/
+cmake-build-*/
+.vs/
+*.user
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.so
+*.dll
+*.exe
+.DS_Store
+Thumbs.db
