@@ -48,6 +48,12 @@ A lightweight, leak-free native C++17 / Qt6 Widgets alternative to Xftp supporti
 .\scripts\build_windows.ps1 -QtDir "C:\Qt\6.8.3\msvc2022_64"
 ```
 
+### 方式三：在 Linux 上交叉编译 Windows `.exe`（llvm-mingw + Qt 6.8）
+无需 Windows 环境，通过 `llvm-mingw` UCRT + Qt 6.8.3 `win64_llvm_mingw` + 静态 OpenSSL 3 / zlib / libssh2 即可直接交叉编译产出便携版 `xsync.exe` 与 `dist/xsync-windows-x64-portable.zip`：
+```bash
+./scripts/cross_build_windows.sh
+```
+
 ### Linux 本地编译与测试
 ```bash
 ./scripts/build_linux.sh

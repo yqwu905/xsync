@@ -106,7 +106,7 @@ target_link_libraries(xsync_core PUBLIC
 )
 
 if(WIN32)
-    target_link_libraries(xsync_core PUBLIC ws2_32 crypt32 psapi bcrypt)
+    target_link_libraries(xsync_core PUBLIC ws2_32 crypt32 psapi bcrypt gdi32 advapi32 user32)
     target_compile_definitions(xsync_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
 
@@ -140,6 +140,7 @@ add_library(xsync_ui STATIC
     src/ui/MainWindow.cpp
     resources/xsync.qrc
 )
+set_property(SOURCE resources/xsync.qrc PROPERTY AUTORCC_OPTIONS "--no-zstd")
 
 target_include_directories(xsync_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(xsync_ui PUBLIC
@@ -164,6 +165,7 @@ if(WIN32)
 endif()
 
 add_executable(xsync WIN32 ${XSYNC_MAIN_SOURCES})
+target_include_directories(xsync PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/resources)
 target_link_libraries(xsync PRIVATE xsync_ui)
 
 if(MSVC)

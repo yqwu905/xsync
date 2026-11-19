@@ -134,8 +134,12 @@ int64_t connectTcpWithTimeout(const QString& host,
     struct addrinfo* res = nullptr;
     int gai = ::getaddrinfo(hostBytes.constData(), portBytes.constData(), &hints, &res);
     if (gai != 0 || !res) {
-        errorOut = QStringLiteral("Failed to resolve host '%1': %2")
-                       .arg(host, QString::fromUtf8(gai_strerror(gai)));
+#ifdef _WIN32
+        const QString gaiMsg = QString::fromWCharArray(gai_strerrorW(gai));
+#else
+        const QString gaiMsg = QString::fromUtf8(gai_strerror(gai));
+#endif
+        errorOut = QStringLiteral("Failed to resolve host '%1': %2").arg(host, gaiMsg);
         return kInvalidSocket;
     }
 
