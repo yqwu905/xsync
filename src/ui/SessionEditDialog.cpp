@@ -2,6 +2,7 @@
 
 #include "core/ProtocolNegotiator.h"
 #include "core/SshClient.h"
+#include "ui/ThemeManager.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -16,10 +17,12 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <thread>
+#include <vector>
 
 namespace xsync {
 
@@ -29,25 +32,37 @@ SessionEditDialog::SessionEditDialog(const SessionProfile& initial,
     : QDialog(parent), original_(initial) {
     setWindowTitle(initial.host.isEmpty() ? QStringLiteral("Register Remote Host")
                                           : QStringLiteral("Edit Remote Host"));
-    resize(520, 500);
+    resize(540, 520);
     setupUi(existingGroups);
     populateFrom(initial);
 }
 
 void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(12, 12, 12, 12);
+    root->setSpacing(10);
+
     auto* tabs = new QTabWidget(this);
+
+    auto configureForm = [](QFormLayout* form, int margin) {
+        form->setContentsMargins(margin, margin, margin, margin);
+        form->setSpacing(10);
+        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    };
 
     // Tab 1: Connection & Authentication
     auto* connTab = new QWidget(tabs);
     auto* connForm = new QFormLayout(connTab);
-    connForm->setSpacing(8);
+    configureForm(connForm, 14);
 
     nameEdit_ = new QLineEdit(connTab);
     nameEdit_->setPlaceholderText(QStringLiteral("e.g. GPU-Node-01"));
 
     groupCombo_ = new QComboBox(connTab);
+    groupCombo_->setObjectName(QStringLiteral("groupCombo"));
     groupCombo_->setEditable(true);
+    groupCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     groupCombo_->addItems(existingGroups);
 
     hostEdit_ = new QLineEdit(connTab);
@@ -56,10 +71,12 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     portSpin_ = new QSpinBox(connTab);
     portSpin_->setRange(1, 65535);
     portSpin_->setValue(22);
+    portSpin_->setFixedWidth(86);
 
     auto* hostRow = new QWidget(connTab);
     auto* hostLay = new QHBoxLayout(hostRow);
     hostLay->setContentsMargins(0, 0, 0, 0);
+    hostLay->setSpacing(6);
     hostLay->addWidget(hostEdit_, 1);
     hostLay->addWidget(new QLabel(QStringLiteral("Port:"), hostRow));
     hostLay->addWidget(portSpin_);
@@ -68,6 +85,8 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     userEdit_->setPlaceholderText(QStringLiteral("root / ubuntu"));
 
     authCombo_ = new QComboBox(connTab);
+    authCombo_->setObjectName(QStringLiteral("authCombo"));
+    authCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     authCombo_->addItem(QStringLiteral("Password"), static_cast<int>(AuthType::Password));
     authCombo_->addItem(QStringLiteral("Private Key File"), static_cast<int>(AuthType::PrivateKey));
     authCombo_->addItem(QStringLiteral("SSH Agent"), static_cast<int>(AuthType::SshAgent));
@@ -81,6 +100,7 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     auto* keyRow = new QWidget(connTab);
     auto* keyLay = new QHBoxLayout(keyRow);
     keyLay->setContentsMargins(0, 0, 0, 0);
+    keyLay->setSpacing(6);
     keyPathEdit_ = new QLineEdit(keyRow);
     keyPathEdit_->setPlaceholderText(QStringLiteral("~/.ssh/id_ed25519 (pick file or type path)"));
     connect(keyPathEdit_, &QLineEdit::textEdited, this, [this](const QString& txt) {
@@ -91,6 +111,7 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     });
     keyBrowseBtn_ = new QPushButton(QStringLiteral("Browse..."), keyRow);
     keyBrowseBtn_->setObjectName(QStringLiteral("keyBrowseBtn"));
+    keyBrowseBtn_->setMinimumWidth(82);
     keyBrowseBtn_->setAutoDefault(false);
     connect(keyBrowseBtn_, &QPushButton::clicked, this, [this]() { browsePrivateKey(false); });
     keyLay->addWidget(keyPathEdit_, 1);
@@ -117,9 +138,11 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     // Tab 2: Transfer & Protocol Policy
     auto* protoTab = new QWidget(tabs);
     auto* protoForm = new QFormLayout(protoTab);
-    protoForm->setSpacing(8);
+    configureForm(protoForm, 14);
 
     protoCombo_ = new QComboBox(protoTab);
+    protoCombo_->setObjectName(QStringLiteral("protoCombo"));
+    protoCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     protoCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Auto),
                          static_cast<int>(ProtocolPreference::Auto));
     protoCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Rsync),
@@ -130,6 +153,8 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
                          static_cast<int>(ProtocolPreference::Scp));
 
     r2rCombo_ = new QComboBox(protoTab);
+    r2rCombo_->setObjectName(QStringLiteral("r2rCombo"));
+    r2rCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     r2rCombo_->addItem(r2rPolicyToString(RemoteToRemotePolicy::DirectThenRelay),
                        static_cast<int>(RemoteToRemotePolicy::DirectThenRelay));
     r2rCombo_->addItem(r2rPolicyToString(RemoteToRemotePolicy::RelayOnly),
@@ -143,6 +168,7 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     keepAliveSpin_->setRange(0, 300);
     keepAliveSpin_->setSuffix(QStringLiteral(" sec"));
     keepAliveSpin_->setValue(30);
+    keepAliveSpin_->setFixedWidth(112);
 
     protoForm->addRow(QStringLiteral("Protocol Priority:"), protoCombo_);
     protoForm->addRow(QStringLiteral("Remote ↔ Remote:"), r2rCombo_);
@@ -150,33 +176,60 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     protoForm->addRow(QString(), forwardAgentCheck_);
     tabs->addTab(protoTab, QStringLiteral("Protocols"));
 
-    // Tab 3: JumpHost / Bastion
+    // Tab 3: JumpHost / Bastion (zero double-nested margins; Host + Port mirrors Tab 1)
     auto* jumpTab = new QWidget(tabs);
     auto* jumpRoot = new QVBoxLayout(jumpTab);
+    jumpRoot->setContentsMargins(14, 14, 14, 14);
+    jumpRoot->setSpacing(10);
+
     useJumpCheck_ = new QCheckBox(QStringLiteral("Connect through SSH JumpHost / Bastion"), jumpTab);
     connect(useJumpCheck_, &QCheckBox::toggled, this, &SessionEditDialog::updateJumpVisibility);
     jumpRoot->addWidget(useJumpCheck_);
 
     jumpContainer_ = new QWidget(jumpTab);
+    jumpContainer_->setObjectName(QStringLiteral("jumpContainer"));
     auto* jumpForm = new QFormLayout(jumpContainer_);
+    jumpForm->setContentsMargins(0, 4, 0, 0);
+    jumpForm->setSpacing(10);
+    jumpForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    jumpForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
     jumpHostEdit_ = new QLineEdit(jumpContainer_);
+    jumpHostEdit_->setPlaceholderText(QStringLiteral("bastion.example.com"));
     jumpPortSpin_ = new QSpinBox(jumpContainer_);
     jumpPortSpin_->setRange(1, 65535);
     jumpPortSpin_->setValue(22);
+    jumpPortSpin_->setFixedWidth(86);
+
+    auto* jumpHostRow = new QWidget(jumpContainer_);
+    auto* jumpHostLay = new QHBoxLayout(jumpHostRow);
+    jumpHostLay->setContentsMargins(0, 0, 0, 0);
+    jumpHostLay->setSpacing(6);
+    jumpHostLay->addWidget(jumpHostEdit_, 1);
+    jumpHostLay->addWidget(new QLabel(QStringLiteral("Port:"), jumpHostRow));
+    jumpHostLay->addWidget(jumpPortSpin_);
+
     jumpUserEdit_ = new QLineEdit(jumpContainer_);
+    jumpUserEdit_->setPlaceholderText(QStringLiteral("bastion-user"));
+
     jumpAuthCombo_ = new QComboBox(jumpContainer_);
+    jumpAuthCombo_->setObjectName(QStringLiteral("jumpAuthCombo"));
+    jumpAuthCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     jumpAuthCombo_->addItem(QStringLiteral("Password"), static_cast<int>(AuthType::Password));
     jumpAuthCombo_->addItem(QStringLiteral("Private Key File"), static_cast<int>(AuthType::PrivateKey));
     jumpAuthCombo_->addItem(QStringLiteral("SSH Agent"), static_cast<int>(AuthType::SshAgent));
+
     jumpPasswordEdit_ = new QLineEdit(jumpContainer_);
     jumpPasswordEdit_->setEchoMode(QLineEdit::Password);
 
     auto* jumpKeyRow = new QWidget(jumpContainer_);
     auto* jumpKeyLay = new QHBoxLayout(jumpKeyRow);
     jumpKeyLay->setContentsMargins(0, 0, 0, 0);
+    jumpKeyLay->setSpacing(6);
     jumpKeyEdit_ = new QLineEdit(jumpKeyRow);
     jumpKeyEdit_->setPlaceholderText(QStringLiteral("~/.ssh/id_ed25519"));
     jumpKeyBrowseBtn_ = new QPushButton(QStringLiteral("Browse..."), jumpKeyRow);
+    jumpKeyBrowseBtn_->setMinimumWidth(82);
     jumpKeyBrowseBtn_->setAutoDefault(false);
     connect(jumpKeyBrowseBtn_, &QPushButton::clicked, this, [this]() { browsePrivateKey(true); });
     jumpKeyLay->addWidget(jumpKeyEdit_, 1);
@@ -185,8 +238,7 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     jumpPassphraseEdit_ = new QLineEdit(jumpContainer_);
     jumpPassphraseEdit_->setEchoMode(QLineEdit::Password);
 
-    jumpForm->addRow(QStringLiteral("Jump Host:"), jumpHostEdit_);
-    jumpForm->addRow(QStringLiteral("Jump Port:"), jumpPortSpin_);
+    jumpForm->addRow(QStringLiteral("Jump Host:"), jumpHostRow);
     jumpForm->addRow(QStringLiteral("Jump Username:"), jumpUserEdit_);
     jumpForm->addRow(QStringLiteral("Jump Auth:"), jumpAuthCombo_);
     jumpForm->addRow(QStringLiteral("Jump Password:"), jumpPasswordEdit_);
@@ -200,19 +252,48 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
 
     // Live Test Connection row
     auto* testRow = new QHBoxLayout();
-    testBtn_ = new QPushButton(QStringLiteral("Test & Probe Protocols"), this);
+    testRow->setSpacing(8);
+    testBtn_ = new QPushButton(QStringLiteral("Test && Probe Protocols"), this);
+    testBtn_->setProperty("btnSize", QStringLiteral("dialog"));
     testBtn_->setAutoDefault(false);
     connect(testBtn_, &QPushButton::clicked, this, &SessionEditDialog::testConnection);
     testResultLabel_ = new QLabel(this);
+    testResultLabel_->setObjectName(QStringLiteral("testResultLabel"));
     testResultLabel_->setWordWrap(true);
+    ThemeManager::setStatus(testResultLabel_, "muted");
     testRow->addWidget(testBtn_);
     testRow->addWidget(testResultLabel_, 1);
     root->addLayout(testRow);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    ThemeManager::styleDialogButtonBox(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &SessionEditDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     root->addWidget(buttons);
+
+    ThemeManager::polishTree(this);
+
+    // Unify QFormLayout label column widths across all 3 tabs so inputs align to the exact same X
+    QFormLayout* const forms[] = {connForm, protoForm, jumpForm};
+    std::vector<QLabel*> formLabels;
+    int maxLabelW = 0;
+    for (QFormLayout* form : forms) {
+        for (int r = 0; r < form->rowCount(); ++r) {
+            if (QLayoutItem* item = form->itemAt(r, QFormLayout::LabelRole)) {
+                if (auto* lbl = qobject_cast<QLabel*>(item->widget())) {
+                    lbl->ensurePolished();
+                    formLabels.push_back(lbl);
+                    if (const int w = lbl->sizeHint().width(); w > maxLabelW) {
+                        maxLabelW = w;
+                    }
+                }
+            }
+        }
+    }
+    for (QLabel* lbl : formLabels) {
+        lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        lbl->setMinimumWidth(maxLabelW);
+    }
 }
 
 void SessionEditDialog::populateFrom(const SessionProfile& p) {
@@ -320,11 +401,12 @@ SessionProfile SessionEditDialog::profile() const {
 void SessionEditDialog::testConnection() {
     SessionProfile p = profile();
     if (!p.isValid()) {
+        ThemeManager::setStatus(testResultLabel_, "warn");
         testResultLabel_->setText(QStringLiteral("Please fill in Host and Username first."));
         return;
     }
     testBtn_->setEnabled(false);
-    testResultLabel_->setStyleSheet(QStringLiteral("color: #facc15;"));
+    ThemeManager::setStatus(testResultLabel_, "warn");
     testResultLabel_->setText(QStringLiteral("Connecting & probing capabilities..."));
 
     QPointer<SessionEditDialog> self(this);
@@ -344,13 +426,13 @@ void SessionEditDialog::testConnection() {
                 if (!self) return;
                 self->testBtn_->setEnabled(true);
                 if (ok) {
-                    self->testResultLabel_->setStyleSheet(QStringLiteral("color: #4ade80;"));
+                    ThemeManager::setStatus(self->testResultLabel_, "ok");
                     self->testResultLabel_->setText(
                         QStringLiteral("Success! OS: %1 | Protocols: %2")
                             .arg(caps.osHint.isEmpty() ? QStringLiteral("POSIX") : caps.osHint,
                                  caps.summaryBadge()));
                 } else {
-                    self->testResultLabel_->setStyleSheet(QStringLiteral("color: #f87171;"));
+                    ThemeManager::setStatus(self->testResultLabel_, "error");
                     self->testResultLabel_->setText(err);
                 }
             },

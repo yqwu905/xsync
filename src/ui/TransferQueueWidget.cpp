@@ -2,10 +2,13 @@
 
 #include "core/TransferManager.h"
 #include "ui/IconCache.h"
+#include "ui/ThemeManager.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QEvent>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -16,32 +19,21 @@
 #include <QSet>
 #include <QShortcut>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTreeView>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace xsync {
 
 namespace {
 
 QColor colorForProtocol(TransferProtocol p) {
-    if (p == TransferProtocol::Rsync || p == TransferProtocol::RemoteDirectRsync) {
-        return QColor(56, 189, 248);  // Cyan
-    }
-    if (p == TransferProtocol::Sftp || p == TransferProtocol::RemoteRelaySftp) {
-        return QColor(74, 222, 128);  // Green
-    }
-    return QColor(251, 191, 36);  // Amber
+    return ThemeManager::protocolColor(p);
 }
 
 QColor colorForStatus(TransferStatus st) {
-    switch (st) {
-        case TransferStatus::Failed: return QColor(248, 113, 113);
-        case TransferStatus::Completed: return QColor(74, 222, 128);
-        case TransferStatus::Paused: return QColor(251, 191, 36);
-        case TransferStatus::Canceled: return QColor(148, 163, 184);
-        case TransferStatus::Scanning: return QColor(56, 189, 248);
-        default: return QColor();
-    }
+    return ThemeManager::statusColor(st);
 }
 
 }  // namespace
@@ -181,7 +173,7 @@ QVariant TransferQueueModel::data(const QModelIndex& index, int role) const {
         }
         if (role == Qt::ForegroundRole) {
             if (index.column() == ColProtocol) return colorForProtocol(b->activeProtocol);
-            if (index.column() == ColFiles && b->failedFiles > 0) return QColor(248, 113, 113);
+            if (index.column() == ColFiles && b->failedFiles > 0) return ThemeManager::errorTextColor();
             if (index.column() == ColStatus) {
                 QColor c = colorForStatus(b->status);
                 if (c.isValid()) return c;
@@ -462,40 +454,62 @@ bool TransferQueueFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex
 // ---------------------------------------------------------------------------
 // ProgressBarDelegate
 // ---------------------------------------------------------------------------
+QSize ProgressBarDelegate::sizeHint(const QStyleOptionViewItem& option,
+                                    const QModelIndex& index) const {
+    QSize sz = QStyledItemDelegate::sizeHint(option, index);
+    sz.setHeight(std::max(28, sz.height()));
+    return sz;
+}
+
 void ProgressBarDelegate::paint(QPainter* painter,
                                 const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const {
     const int pct = qBound(0, index.data(TransferQueueModel::RoleProgressPercent).toInt(), 100);
     const auto st = static_cast<TransferStatus>(index.data(TransferQueueModel::RoleStatusInt).toInt());
 
-    painter->save();
-    if (option.state & QStyle::State_Selected) {
-        painter->fillRect(option.rect, option.palette.highlight());
-    }
-    QRect barRect = option.rect.adjusted(4, 4, -4, -4);
-    painter->setRenderHint(QPainter::Antialiasing, true);
-    painter->setPen(QColor(51, 65, 85));
-    painter->setBrush(QColor(30, 41, 59));
-    painter->drawRoundedRect(barRect, 3, 3);
+    QStyleOptionViewItem opt(option);
+    initStyleOption(&opt, index);
+    opt.text.clear();
+    opt.icon = QIcon();
+    const QStyle* style = opt.widget ? opt.widget->style() : QApplication::style();
 
+    painter->save();
+    // Draw item background (alternating rows, hover, active/inactive selection) via QStyle
+    style->drawPrimitive(QStyle::PE_PanelItemViewItem, &opt, painter, opt.widget);
+
+    const ProgressBarColors colors = ThemeManager::progressColors();
+    const QRect barRect = option.rect.adjusted(4, 4, -4, -4);
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(colors.border);
+    painter->setBrush(colors.track);
+    painter->drawRoundedRect(barRect, 4, 4);
+
+    QRect fill;
     if (pct > 0) {
-        QRect fill = barRect.adjusted(1, 1, -1, -1);
-        fill.setWidth(std::max(2, (fill.width() * pct) / 100));
-        QColor barColor(37, 99, 235);  // Blue running
-        if (st == TransferStatus::Completed || pct >= 100) barColor = QColor(34, 197, 94);  // Green
-        else if (st == TransferStatus::Failed) barColor = QColor(239, 68, 68);             // Red
-        else if (st == TransferStatus::Paused) barColor = QColor(217, 119, 6);             // Amber
+        fill = barRect.adjusted(1, 1, -1, -1);
+        fill.setWidth(std::max(3, (fill.width() * pct) / 100));
+        QColor barColor = colors.fillRunning;
+        if (st == TransferStatus::Failed) barColor = colors.fillFailed;
+        else if (st == TransferStatus::Paused) barColor = colors.fillPaused;
+        else if (st == TransferStatus::Completed || pct >= 100) barColor = colors.fillCompleted;
         painter->setPen(Qt::NoPen);
         painter->setBrush(barColor);
-        painter->drawRoundedRect(fill, 2, 2);
+        painter->drawRoundedRect(fill, 3, 3);
     }
 
-    painter->setPen(Qt::white);
-    QString label = (st == TransferStatus::Scanning)
-                        ? QStringLiteral("Scan")
-                        : (st == TransferStatus::Paused ? QStringLiteral("%1% (Paused)").arg(pct)
-                                                        : QStringLiteral("%1%").arg(pct));
+    const QString label = (st == TransferStatus::Scanning)
+                              ? QStringLiteral("Scan")
+                              : (st == TransferStatus::Paused ? QStringLiteral("%1% (Paused)").arg(pct)
+                                                              : QStringLiteral("%1%").arg(pct));
+
+    // Crisp contrast on both unfilled track and filled bar in Dark AND Light modes
+    painter->setPen(colors.textOnTrack);
     painter->drawText(barRect, Qt::AlignCenter, label);
+    if (pct > 0 && fill.isValid()) {
+        painter->setClipRect(fill);
+        painter->setPen(colors.textOnFill);
+        painter->drawText(barRect, Qt::AlignCenter, label);
+    }
     painter->restore();
 }
 
@@ -506,59 +520,81 @@ TransferQueueWidget::TransferQueueWidget(TransferManager* manager, QWidget* pare
     : QWidget(parent), manager_(manager) {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(4);
+    root->setSpacing(0);
 
-    // Granular Xftp-style control bar
+    // Granular Xftp-style control bar (uniform 28px tier)
     auto* bar = new QHBoxLayout();
-    bar->setContentsMargins(6, 4, 6, 2);
-    bar->setSpacing(5);
+    bar->setContentsMargins(8, 6, 8, 6);
+    bar->setSpacing(6);
 
-    auto* pauseSelBtn = new QPushButton(QStringLiteral("Pause"), this);
-    pauseSelBtn->setToolTip(QStringLiteral("Pause selected files or folder"));
-    connect(pauseSelBtn, &QPushButton::clicked, this, &TransferQueueWidget::pauseSelected);
+    pauseSelBtn_ = new QPushButton(QStringLiteral("Pause"), this);
+    pauseSelBtn_->setMinimumWidth(72);
+    pauseSelBtn_->setToolTip(QStringLiteral("Pause selected files or folder"));
+    connect(pauseSelBtn_, &QPushButton::clicked, this, &TransferQueueWidget::pauseSelected);
 
-    auto* resumeSelBtn = new QPushButton(QStringLiteral("Resume"), this);
-    resumeSelBtn->setToolTip(QStringLiteral("Resume selected paused files or folder"));
-    connect(resumeSelBtn, &QPushButton::clicked, this, &TransferQueueWidget::resumeSelected);
+    resumeSelBtn_ = new QPushButton(QStringLiteral("Resume"), this);
+    resumeSelBtn_->setMinimumWidth(72);
+    resumeSelBtn_->setToolTip(QStringLiteral("Resume selected paused files or folder"));
+    connect(resumeSelBtn_, &QPushButton::clicked, this, &TransferQueueWidget::resumeSelected);
 
-    auto* removeSelBtn = new QPushButton(QStringLiteral("Delete"), this);
-    removeSelBtn->setToolTip(QStringLiteral("Cancel & remove selected files or folder from queue (Del)"));
-    connect(removeSelBtn, &QPushButton::clicked, this, &TransferQueueWidget::removeSelected);
+    removeSelBtn_ = new QPushButton(QStringLiteral("Delete"), this);
+    removeSelBtn_->setProperty("variant", QStringLiteral("danger"));
+    removeSelBtn_->setMinimumWidth(72);
+    removeSelBtn_->setToolTip(QStringLiteral("Cancel & remove selected files or folder from queue (Del)"));
+    connect(removeSelBtn_, &QPushButton::clicked, this, &TransferQueueWidget::removeSelected);
+
+    auto* divider = new QFrame(this);
+    divider->setObjectName(QStringLiteral("toolbarDivider"));
+    divider->setFixedSize(1, 18);
 
     auto* retryBtn = new QPushButton(QStringLiteral("Retry Failed"), this);
+    retryBtn->setMinimumWidth(88);
     retryBtn->setToolTip(QStringLiteral("Retry selected failed items (or all failed items)"));
     connect(retryBtn, &QPushButton::clicked, this, &TransferQueueWidget::retrySelectedOrFailed);
 
     auto* clearBtn = new QPushButton(QStringLiteral("Clear Done"), this);
+    clearBtn->setMinimumWidth(84);
     connect(clearBtn, &QPushButton::clicked, this, [this]() {
         if (manager_) manager_->clearFinished();
     });
 
     pauseAllBtn_ = new QPushButton(QStringLiteral("Pause All"), this);
+    pauseAllBtn_->setObjectName(QStringLiteral("pauseAllBtn"));
+    pauseAllBtn_->setMinimumWidth(108);
     connect(pauseAllBtn_, &QPushButton::clicked, this, [this]() {
         if (!manager_) return;
         const bool next = !manager_->isPaused();
         manager_->setPaused(next);
         pauseAllBtn_->setText(next ? QStringLiteral("Resume All") : QStringLiteral("Pause All"));
+        pauseAllBtn_->setProperty("active", next);
+        pauseAllBtn_->style()->unpolish(pauseAllBtn_);
+        pauseAllBtn_->style()->polish(pauseAllBtn_);
+        pauseAllBtn_->update();
     });
 
     filterCombo_ = new QComboBox(this);
+    filterCombo_->setObjectName(QStringLiteral("queueFilterCombo"));
     filterCombo_->addItem(QStringLiteral("Show: All"), static_cast<int>(TransferQueueFilterProxy::FilterAll));
     filterCombo_->addItem(QStringLiteral("Show: Active"), static_cast<int>(TransferQueueFilterProxy::FilterActive));
     filterCombo_->addItem(QStringLiteral("Show: Paused"), static_cast<int>(TransferQueueFilterProxy::FilterPaused));
     filterCombo_->addItem(QStringLiteral("Show: Failed Only"), static_cast<int>(TransferQueueFilterProxy::FilterFailed));
+    filterCombo_->setMinimumWidth(160);
+    ThemeManager::polishComboBox(filterCombo_);
 
     concurSpin_ = new QSpinBox(this);
+    concurSpin_->setObjectName(QStringLiteral("queueConcurSpin"));
     concurSpin_->setRange(1, 8);
     concurSpin_->setValue(manager_ ? manager_->maxConcurrent() : 3);
     concurSpin_->setPrefix(QStringLiteral("Workers: "));
+    concurSpin_->setMinimumWidth(120);
     connect(concurSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int n) {
         if (manager_) manager_->setMaxConcurrent(n);
     });
 
-    bar->addWidget(pauseSelBtn);
-    bar->addWidget(resumeSelBtn);
-    bar->addWidget(removeSelBtn);
+    bar->addWidget(pauseSelBtn_);
+    bar->addWidget(resumeSelBtn_);
+    bar->addWidget(removeSelBtn_);
+    bar->addWidget(divider);
     bar->addWidget(retryBtn);
     bar->addWidget(clearBtn);
     bar->addWidget(pauseAllBtn_);
@@ -589,23 +625,52 @@ TransferQueueWidget::TransferQueueWidget(TransferManager* manager, QWidget* pare
     view_->setRootIsDecorated(true);
     view_->setContextMenuPolicy(Qt::CustomContextMenu);
     view_->header()->setStretchLastSection(true);
+    view_->header()->setHighlightSections(false);
     view_->setColumnWidth(TransferQueueModel::ColItem, 230);
     view_->setColumnWidth(TransferQueueModel::ColFiles, 92);
     view_->setColumnWidth(TransferQueueModel::ColRoute, 155);
     view_->setColumnWidth(TransferQueueModel::ColProtocol, 96);
-    view_->setColumnWidth(TransferQueueModel::ColProgress, 118);
+    view_->setColumnWidth(TransferQueueModel::ColProgress, 124);
     view_->setColumnWidth(TransferQueueModel::ColSize, 124);
     view_->setColumnWidth(TransferQueueModel::ColSpeed, 86);
     view_->setColumnWidth(TransferQueueModel::ColEta, 62);
 
     connect(view_, &QWidget::customContextMenuRequested, this, &TransferQueueWidget::showContextMenu);
     connect(view_, &QTreeView::doubleClicked, this, &TransferQueueWidget::showErrorDetails);
+    connect(view_->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, &TransferQueueWidget::updateButtonStates);
+    connect(proxy_, &QAbstractItemModel::rowsRemoved, this, &TransferQueueWidget::updateButtonStates);
+    connect(proxy_, &QAbstractItemModel::modelReset, this, &TransferQueueWidget::updateButtonStates);
+
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](bool) {
+        if (view_ && view_->viewport()) {
+            view_->viewport()->update();
+        }
+    });
 
     auto* delSc = new QShortcut(QKeySequence::Delete, view_);
     delSc->setContext(Qt::WidgetWithChildrenShortcut);
     connect(delSc, &QShortcut::activated, this, &TransferQueueWidget::removeSelected);
 
     root->addWidget(view_, 1);
+    updateButtonStates();
+}
+
+void TransferQueueWidget::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::StyleChange || event->type() == QEvent::PaletteChange)) {
+        if (view_ && view_->viewport()) {
+            view_->viewport()->update();
+        }
+    }
+}
+
+void TransferQueueWidget::updateButtonStates() {
+    const bool hasSel = view_ && view_->selectionModel() &&
+                        !view_->selectionModel()->selectedRows().isEmpty();
+    if (pauseSelBtn_) pauseSelBtn_->setEnabled(hasSel);
+    if (resumeSelBtn_) resumeSelBtn_->setEnabled(hasSel);
+    if (removeSelBtn_) removeSelBtn_->setEnabled(hasSel);
 }
 
 TransferQueueWidget::SelectionSet TransferQueueWidget::collectSelection() const {

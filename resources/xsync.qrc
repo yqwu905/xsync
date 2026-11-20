@@ -10,6 +10,36 @@
         <file>icons/symlink.svg</file>
         <file>icons/server.svg</file>
         <file>icons/computer.svg</file>
+        <file>icons/ui/chevron_down_dark.svg</file>
+        <file>icons/ui/chevron_down_light.svg</file>
+        <file>icons/ui/chevron_down_disabled_dark.svg</file>
+        <file>icons/ui/chevron_down_disabled_light.svg</file>
+        <file>icons/ui/chevron_down_white.svg</file>
+        <file>icons/ui/chevron_up_dark.svg</file>
+        <file>icons/ui/chevron_up_light.svg</file>
+        <file>icons/ui/chevron_up_disabled_dark.svg</file>
+        <file>icons/ui/chevron_up_disabled_light.svg</file>
+        <file>icons/ui/chevron_right_dark.svg</file>
+        <file>icons/ui/chevron_right_light.svg</file>
+        <file>icons/ui/chevron_right_white.svg</file>
+        <file>icons/ui/check_white.svg</file>
+        <file>icons/ui/check_disabled_dark.svg</file>
+        <file>icons/ui/check_disabled_light.svg</file>
+        <file>icons/ui/close_dark.svg</file>
+        <file>icons/ui/close_dark_hover.svg</file>
+        <file>icons/ui/close_light.svg</file>
+        <file>icons/ui/close_light_hover.svg</file>
+        <file>icons/ui/arrow_left.svg</file>
+        <file>icons/ui/arrow_up.svg</file>
+        <file>icons/ui/arrow_down.svg</file>
+        <file>icons/ui/home.svg</file>
+        <file>icons/ui/refresh.svg</file>
+        <file>icons/ui/transfer.svg</file>
+        <file>icons/ui/window_new.svg</file>
+        <file>icons/ui/plus.svg</file>
+        <file>icons/ui/star_outline.svg</file>
+        <file>icons/ui/star_filled.svg</file>
+        <file>icons/ui/bookmarks.svg</file>
         <file>styles/dark.qss</file>
         <file>styles/light.qss</file>
     </qresource>

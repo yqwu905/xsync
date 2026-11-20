@@ -107,6 +107,7 @@ class ProgressBarDelegate : public QStyledItemDelegate {
     Q_OBJECT
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     void paint(QPainter* painter,
                const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
@@ -117,6 +118,9 @@ class TransferQueueWidget : public QWidget {
 public:
     explicit TransferQueueWidget(TransferManager* manager, QWidget* parent = nullptr);
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
     struct SelectionSet {
         std::vector<uint64_t> batchIds;
@@ -124,6 +128,7 @@ private:
     };
 
     SelectionSet collectSelection() const;
+    void updateButtonStates();
     void pauseSelected();
     void resumeSelected();
     void cancelSelected();
@@ -136,6 +141,9 @@ private:
     TransferQueueModel* model_ = nullptr;
     TransferQueueFilterProxy* proxy_ = nullptr;
     QTreeView* view_ = nullptr;
+    QPushButton* pauseSelBtn_ = nullptr;
+    QPushButton* resumeSelBtn_ = nullptr;
+    QPushButton* removeSelBtn_ = nullptr;
     QPushButton* pauseAllBtn_ = nullptr;
     QComboBox* filterCombo_ = nullptr;
     QSpinBox* concurSpin_ = nullptr;

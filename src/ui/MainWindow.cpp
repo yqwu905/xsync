@@ -8,13 +8,14 @@
 #include "ui/IconCache.h"
 #include "ui/PaneTabWidget.h"
 #include "ui/SessionEditDialog.h"
+#include "ui/ThemeManager.h"
 #include "ui/TransferQueueWidget.h"
 
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
-#include <QFile>
 #include <QFileInfo>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -23,6 +24,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
@@ -53,6 +55,14 @@ MainWindow::MainWindow(SessionStore* sessionStore,
     setupQuickConnectBar();
     setupCentralWorkspace();
     setupStatusBar();
+    ThemeManager::polishTree(this);
+
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](bool dark) {
+        if (darkThemeAct_) {
+            QSignalBlocker blocker(darkThemeAct_);
+            darkThemeAct_->setChecked(dark);
+        }
+    });
 
     // Wire shared TransferManager signals
     if (transferMgr_) {
@@ -176,8 +186,7 @@ void MainWindow::setupMenus() {
     viewMenu->addSeparator();
     darkThemeAct_ = viewMenu->addAction(QStringLiteral("Dark Theme"));
     darkThemeAct_->setCheckable(true);
-    QSettings settings(QStringLiteral("xsync"), QStringLiteral("xsync"));
-    darkThemeAct_->setChecked(settings.value(QStringLiteral("ui/darkTheme"), true).toBool());
+    darkThemeAct_->setChecked(ThemeManager::isDark());
     connect(darkThemeAct_, &QAction::toggled, this, &MainWindow::applyTheme);
 
     viewMenu->addSeparator();
@@ -191,13 +200,14 @@ void MainWindow::setupMenus() {
 void MainWindow::setupToolbar() {
     auto* tb = addToolBar(QStringLiteral("Main"));
     tb->setMovable(false);
+    tb->setIconSize(QSize(16, 16));
     tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
     QAction* actSessions = tb->addAction(IconCache::serverIcon(), QStringLiteral("Sessions"));
     actSessions->setToolTip(QStringLiteral("Open Session Manager (Ctrl+O)"));
     connect(actSessions, &QAction::triggered, this, [this]() { openSessionManager(); });
 
-    QAction* actNewWin = tb->addAction(QStringLiteral("New Window"));
+    QAction* actNewWin = tb->addAction(IconCache::newWindowIcon(), QStringLiteral("New Window"));
     actNewWin->setToolTip(QStringLiteral("Open an independent xsync window for multi-window transfers (Ctrl+N)"));
     connect(actNewWin, &QAction::triggered, this, [this]() {
         if (windowFactory_) windowFactory_(nullptr);
@@ -205,35 +215,49 @@ void MainWindow::setupToolbar() {
 
     tb->addSeparator();
 
-    QAction* actTransfer = tb->addAction(QStringLiteral("⇄ Transfer Selected"));
+    QAction* actTransfer = tb->addAction(IconCache::transferIcon(), QStringLiteral("Transfer Selected"));
     actTransfer->setToolTip(QStringLiteral("Transfer selected items to the opposite pane (Ctrl+Enter)"));
     connect(actTransfer, &QAction::triggered, this, &MainWindow::onTransferSelectedClicked);
 
-    QAction* actRefresh = tb->addAction(QStringLiteral("↻ Refresh"));
+    QAction* actRefresh = tb->addAction(IconCache::refreshIcon(), QStringLiteral("Refresh"));
+    actRefresh->setToolTip(QStringLiteral("Refresh active pane (F5)"));
     connect(actRefresh, &QAction::triggered, this, [this]() {
         if (FilePane* p = activePane()) p->refresh();
     });
 
     tb->addSeparator();
-    tb->addWidget(new QLabel(QStringLiteral(" Protocol: "), tb));
+
+    auto* protoLbl = new QLabel(QStringLiteral("Protocol:"), tb);
+    protoLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    tb->addWidget(protoLbl);
 
     protoPrefCombo_ = new QComboBox(tb);
-    protoPrefCombo_->addItem(QStringLiteral("Auto (rsync → SFTP → SCP)"),
+    protoPrefCombo_->setObjectName(QStringLiteral("protoPrefCombo"));
+    protoPrefCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Auto),
                              static_cast<int>(ProtocolPreference::Auto));
-    protoPrefCombo_->addItem(QStringLiteral("Prefer rsync"), static_cast<int>(ProtocolPreference::Rsync));
-    protoPrefCombo_->addItem(QStringLiteral("Force SFTP"), static_cast<int>(ProtocolPreference::Sftp));
-    protoPrefCombo_->addItem(QStringLiteral("Force SCP"), static_cast<int>(ProtocolPreference::Scp));
+    protoPrefCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Rsync),
+                             static_cast<int>(ProtocolPreference::Rsync));
+    protoPrefCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Sftp),
+                             static_cast<int>(ProtocolPreference::Sftp));
+    protoPrefCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Scp),
+                             static_cast<int>(ProtocolPreference::Scp));
+    protoPrefCombo_->setMinimumWidth(214);
     protoPrefCombo_->setToolTip(QStringLiteral("Default protocol negotiation priority"));
     tb->addWidget(protoPrefCombo_);
 
-    tb->addWidget(new QLabel(QStringLiteral("  Remote↔Remote: "), tb));
+    auto* r2rLbl = new QLabel(QStringLiteral("Remote ↔ Remote:"), tb);
+    r2rLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    tb->addWidget(r2rLbl);
+
     r2rPolicyCombo_ = new QComboBox(tb);
-    r2rPolicyCombo_->addItem(QStringLiteral("Direct → Auto Relay"),
+    r2rPolicyCombo_->setObjectName(QStringLiteral("r2rPolicyCombo"));
+    r2rPolicyCombo_->addItem(r2rPolicyToString(RemoteToRemotePolicy::DirectThenRelay),
                              static_cast<int>(RemoteToRemotePolicy::DirectThenRelay));
-    r2rPolicyCombo_->addItem(QStringLiteral("Local Stream Relay Only"),
+    r2rPolicyCombo_->addItem(r2rPolicyToString(RemoteToRemotePolicy::RelayOnly),
                              static_cast<int>(RemoteToRemotePolicy::RelayOnly));
-    r2rPolicyCombo_->addItem(QStringLiteral("Direct Only"),
+    r2rPolicyCombo_->addItem(r2rPolicyToString(RemoteToRemotePolicy::DirectOnly),
                              static_cast<int>(RemoteToRemotePolicy::DirectOnly));
+    r2rPolicyCombo_->setMinimumWidth(176);
     r2rPolicyCombo_->setToolTip(QStringLiteral("Routing strategy for Remote-to-Remote transfers"));
     tb->addWidget(r2rPolicyCombo_);
 }
@@ -241,39 +265,63 @@ void MainWindow::setupToolbar() {
 void MainWindow::setupQuickConnectBar() {
     auto* qcBar = addToolBar(QStringLiteral("Quick Connect"));
     qcBar->setMovable(false);
-    addToolBarBreak(Qt::TopToolBarArea);
     insertToolBarBreak(qcBar);
 
-    qcBar->addWidget(new QLabel(QStringLiteral(" Quick Connect  Host: "), qcBar));
+    auto* titleLbl = new QLabel(QStringLiteral("Quick Connect"), qcBar);
+    titleLbl->setObjectName(QStringLiteral("toolbarTitle"));
+    qcBar->addWidget(titleLbl);
+
+    auto* qcDivider = new QFrame(qcBar);
+    qcDivider->setObjectName(QStringLiteral("toolbarDivider"));
+    qcDivider->setFixedSize(1, 18);
+    qcBar->addWidget(qcDivider);
+
+    auto* hostLbl = new QLabel(QStringLiteral("Host:"), qcBar);
+    hostLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    qcBar->addWidget(hostLbl);
     qcHostEdit_ = new QLineEdit(qcBar);
     qcHostEdit_->setPlaceholderText(QStringLiteral("192.168.1.10 / host"));
+    qcHostEdit_->setMinimumWidth(115);
     qcHostEdit_->setMaximumWidth(190);
     qcBar->addWidget(qcHostEdit_);
 
-    qcBar->addWidget(new QLabel(QStringLiteral(" Port: "), qcBar));
+    auto* portLbl = new QLabel(QStringLiteral("Port:"), qcBar);
+    portLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    qcBar->addWidget(portLbl);
     qcPortSpin_ = new QSpinBox(qcBar);
+    qcPortSpin_->setObjectName(QStringLiteral("qcPortSpin"));
     qcPortSpin_->setRange(1, 65535);
     qcPortSpin_->setValue(22);
-    qcPortSpin_->setMaximumWidth(70);
+    qcPortSpin_->setFixedWidth(78);
     qcBar->addWidget(qcPortSpin_);
 
-    qcBar->addWidget(new QLabel(QStringLiteral(" User: "), qcBar));
+    auto* userLbl = new QLabel(QStringLiteral("User:"), qcBar);
+    userLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    qcBar->addWidget(userLbl);
     qcUserEdit_ = new QLineEdit(qcBar);
     qcUserEdit_->setPlaceholderText(QStringLiteral("root"));
+    qcUserEdit_->setMinimumWidth(72);
     qcUserEdit_->setMaximumWidth(120);
     qcBar->addWidget(qcUserEdit_);
 
-    qcBar->addWidget(new QLabel(QStringLiteral(" Pass: "), qcBar));
+    auto* passLbl = new QLabel(QStringLiteral("Pass:"), qcBar);
+    passLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    qcBar->addWidget(passLbl);
     qcPassEdit_ = new QLineEdit(qcBar);
     qcPassEdit_->setEchoMode(QLineEdit::Password);
     qcPassEdit_->setPlaceholderText(QStringLiteral("Empty = SSH Agent"));
+    qcPassEdit_->setMinimumWidth(90);
     qcPassEdit_->setMaximumWidth(140);
     qcBar->addWidget(qcPassEdit_);
 
     auto* leftBtn = new QPushButton(QStringLiteral("Open Left"), qcBar);
+    leftBtn->setMinimumWidth(84);
     auto* rightBtn = new QPushButton(QStringLiteral("Open Right"), qcBar);
     rightBtn->setObjectName(QStringLiteral("primaryBtn"));
+    rightBtn->setProperty("variant", QStringLiteral("primary"));
+    rightBtn->setMinimumWidth(98);
     auto* saveBtn = new QPushButton(QStringLiteral("Save Host"), qcBar);
+    saveBtn->setMinimumWidth(86);
 
     connect(leftBtn, &QPushButton::clicked, this, [this]() { openQuickConnect(false); });
     connect(rightBtn, &QPushButton::clicked, this, [this]() { openQuickConnect(true); });
@@ -288,13 +336,15 @@ void MainWindow::setupQuickConnectBar() {
 void MainWindow::setupCentralWorkspace() {
     auto* central = new QWidget(this);
     auto* mainLay = new QVBoxLayout(central);
-    mainLay->setContentsMargins(6, 4, 6, 4);
+    mainLay->setContentsMargins(6, 6, 6, 4);
     mainLay->setSpacing(4);
 
     auto* vertSplit = new QSplitter(Qt::Vertical, central);
+    vertSplit->setHandleWidth(5);
 
     // Top: Dual-pane multi-tab workspace
     auto* paneSplit = new QSplitter(Qt::Horizontal, vertSplit);
+    paneSplit->setHandleWidth(5);
     leftTabs_ = new PaneTabWidget(QStringLiteral("Left"), sessionStore_, transferMgr_, paneSplit);
     rightTabs_ = new PaneTabWidget(QStringLiteral("Right"), sessionStore_, transferMgr_, paneSplit);
 
@@ -307,9 +357,11 @@ void MainWindow::setupCentralWorkspace() {
     paneSplit->addWidget(rightTabs_);
     paneSplit->setStretchFactor(0, 1);
     paneSplit->setStretchFactor(1, 1);
+    paneSplit->setSizes({670, 670});
 
     // Bottom: Transfer Queue + Bounded Activity Log
     auto* bottomTabs = new QTabWidget(vertSplit);
+    bottomTabs->setDocumentMode(true);
     queueWidget_ = new TransferQueueWidget(transferMgr_, bottomTabs);
     logView_ = new QPlainTextEdit(bottomTabs);
     logView_->setReadOnly(true);
@@ -544,11 +596,7 @@ void MainWindow::appendLog(const QString& message) {
 void MainWindow::applyTheme(bool dark) {
     QSettings settings(QStringLiteral("xsync"), QStringLiteral("xsync"));
     settings.setValue(QStringLiteral("ui/darkTheme"), dark);
-
-    QFile f(dark ? QStringLiteral(":/styles/dark.qss") : QStringLiteral(":/styles/light.qss"));
-    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qApp->setStyleSheet(QString::fromUtf8(f.readAll()));
-    }
+    ThemeManager::applyTheme(dark);
 }
 
 void MainWindow::updateStatusStats() {

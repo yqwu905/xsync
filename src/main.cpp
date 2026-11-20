@@ -3,12 +3,12 @@
 #include "core/TransferManager.h"
 #include "core/Types.h"
 #include "ui/MainWindow.h"
+#include "ui/ThemeManager.h"
 
 #include <QApplication>
 #include <QFile>
 #include <QPixmap>
 #include <QSettings>
-#include <QStyleFactory>
 #include <QTimer>
 #include <cstdio>
 
@@ -62,11 +62,10 @@ int main(int argc, char* argv[]) {
     xsync::SshGlobalInit sshInit;
 
     QApplication app(argc, argv);
-    Q_INIT_RESOURCE(xsync);
     app.setApplicationName(QStringLiteral("xsync"));
     app.setOrganizationName(QStringLiteral("xsync"));
     app.setApplicationVersion(QStringLiteral("1.0.0"));
-    app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    xsync::ThemeManager::initialize(app);
 
     qRegisterMetaType<xsync::PathBookmark>("xsync::PathBookmark");
     qRegisterMetaType<xsync::FileEntry>("xsync::FileEntry");
@@ -82,10 +81,7 @@ int main(int argc, char* argv[]) {
     // Apply saved theme (Dark by default)
     QSettings settings(QStringLiteral("xsync"), QStringLiteral("xsync"));
     const bool dark = settings.value(QStringLiteral("ui/darkTheme"), true).toBool();
-    QFile qssFile(dark ? QStringLiteral(":/styles/dark.qss") : QStringLiteral(":/styles/light.qss"));
-    if (qssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        app.setStyleSheet(QString::fromUtf8(qssFile.readAll()));
-    }
+    xsync::ThemeManager::applyTheme(dark);
 
     xsync::SessionStore sessionStore;
     sessionStore.load();

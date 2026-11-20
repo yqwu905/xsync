@@ -15,6 +15,7 @@
 
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QPushButton;
 class QToolButton;
 
@@ -93,6 +94,7 @@ private:
     void postRemoteOp(std::function<void(SshClient&)> op);
     void updateHeaderUi(const QString& statusText, bool isError = false);
     void updateBookmarkButtonState();
+    void populateBookmarksMenu();
     void updateFooterSummary();
     void showContextMenu(const QPoint& pos);
     void onRowDoubleClicked(const QModelIndex& proxyIdx);
@@ -123,6 +125,7 @@ private:
     QLineEdit* pathEdit_ = nullptr;
     QToolButton* starBtn_ = nullptr;
     QToolButton* bookmarksBtn_ = nullptr;
+    QMenu* bookmarksMenu_ = nullptr;
     QLineEdit* filterEdit_ = nullptr;
     QToolButton* refreshBtn_ = nullptr;
 

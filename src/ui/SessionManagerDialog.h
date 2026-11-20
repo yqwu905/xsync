@@ -32,6 +32,7 @@ signals:
 private:
     void setupUi();
     void rebuildTree();
+    void updateButtonStates();
     std::optional<SessionProfile> selectedProfile() const;
     void onNewHost();
     void onEditHost();

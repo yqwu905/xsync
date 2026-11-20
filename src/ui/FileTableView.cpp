@@ -3,6 +3,7 @@
 #include "core/FileSystemBackend.h"
 #include "core/SecretStore.h"
 #include "ui/FileListModel.h"
+#include "ui/ThemeManager.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -19,6 +20,7 @@
 #include <QShortcut>
 #include <QSortFilterProxyModel>
 #include <QUrl>
+#include <cmath>
 
 namespace xsync {
 
@@ -90,9 +92,13 @@ FileTableView::FileTableView(QWidget* parent) : QTableView(parent) {
     setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     verticalHeader()->setVisible(false);
-    verticalHeader()->setDefaultSectionSize(24);
+    verticalHeader()->setDefaultSectionSize(26);
     horizontalHeader()->setStretchLastSection(true);
     horizontalHeader()->setHighlightSections(false);
+
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](bool) {
+        viewport()->update();
+    });
 
     setDragEnabled(true);
     setAcceptDrops(true);
@@ -285,15 +291,18 @@ void FileTableView::startDrag(Qt::DropActions /*supportedActions*/) {
     QFontMetrics fm(font());
     const int w = std::min(320, fm.horizontalAdvance(label) + 24);
     const int h = fm.height() + 12;
-    QPixmap pix(w, h);
+    const qreal dpr = (devicePixelRatioF() > 0.0) ? devicePixelRatioF() : 1.0;
+    QPixmap pix(static_cast<int>(std::lround(w * dpr)), static_cast<int>(std::lround(h * dpr)));
+    pix.setDevicePixelRatio(dpr);
     pix.fill(Qt::transparent);
     {
         QPainter p(&pix);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.setBrush(QColor(37, 99, 235, 225));
-        p.setPen(QPen(QColor(147, 197, 253), 1));
-        p.drawRoundedRect(0, 0, w - 1, h - 1, 6, 6);
-        p.setPen(Qt::white);
+        const DragBadgeColors badge = ThemeManager::dragBadgeColors();
+        p.setBrush(badge.bg);
+        p.setPen(QPen(badge.border, 1));
+        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 6, 6);
+        p.setPen(badge.text);
         p.drawText(QRect(10, 0, w - 20, h), Qt::AlignVCenter | Qt::AlignLeft,
                    fm.elidedText(label, Qt::ElideMiddle, w - 20));
     }
@@ -426,7 +435,26 @@ void FileTableView::paintEvent(QPaintEvent* event) {
     QTableView::paintEvent(event);
     if (dragHoverActive_) {
         QPainter p(viewport());
-        p.setPen(QPen(QColor(59, 130, 246), 2, Qt::DashLine));
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QColor accent = ThemeManager::dropAccentColor();
+
+        if (hoveredFolderIndex_.isValid()) {
+            const auto* proxy = qobject_cast<const QSortFilterProxyModel*>(model());
+            const auto* srcModel = proxy ? qobject_cast<const FileListModel*>(proxy->sourceModel())
+                                         : qobject_cast<const FileListModel*>(model());
+            if (srcModel) {
+                const QModelIndex srcIdx = proxy ? proxy->mapToSource(hoveredFolderIndex_) : hoveredFolderIndex_;
+                if (const FileEntry* e = srcModel->entryAt(srcIdx.row()); e && e->isDir) {
+                    const QRect cellRect = visualRect(hoveredFolderIndex_);
+                    QRect rowRect(2, cellRect.top(), viewport()->width() - 4, cellRect.height());
+                    p.fillRect(rowRect, ThemeManager::dropFolderFillColor());
+                    p.setPen(QPen(accent, 1));
+                    p.drawRoundedRect(rowRect.adjusted(0, 0, -1, -1), 3, 3);
+                }
+            }
+        }
+
+        p.setPen(QPen(accent, 2, Qt::DashLine));
         p.drawRect(viewport()->rect().adjusted(2, 2, -2, -2));
     }
 }

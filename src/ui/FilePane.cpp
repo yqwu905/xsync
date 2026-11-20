@@ -8,6 +8,7 @@
 #include "ui/BookmarkManagerDialog.h"
 #include "ui/FileListModel.h"
 #include "ui/IconCache.h"
+#include "ui/ThemeManager.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -23,13 +24,69 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QResizeEvent>
 #include <QStyle>
 #include <QToolButton>
 #include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace xsync {
+
+namespace {
+
+class ElidedLabel final : public QLabel {
+public:
+    explicit ElidedLabel(const QString& fullText, QWidget* parent = nullptr)
+        : QLabel(parent), fullText_(fullText) {
+        setToolTip(fullText_);
+        QLabel::setText(fullText_);
+    }
+
+    QSize sizeHint() const override {
+        const QMargins m = contentsMargins();
+        const int w = fontMetrics().horizontalAdvance(fullText_) + m.left() + m.right() + 2;
+        const int h = fontMetrics().height() + m.top() + m.bottom();
+        return QSize(w, h);
+    }
+
+    QSize minimumSizeHint() const override {
+        QSize sz = sizeHint();
+        sz.setWidth(std::min(sz.width(), 60));
+        return sz;
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QLabel::resizeEvent(event);
+        updateElidedText();
+    }
+
+    void changeEvent(QEvent* event) override {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange) {
+            updateElidedText();
+        }
+    }
+
+private:
+    void updateElidedText() {
+        const int avail = contentsRect().width();
+        if (avail <= 0) {
+            if (QLabel::text() != fullText_) QLabel::setText(fullText_);
+            return;
+        }
+        const QString elided = fontMetrics().elidedText(fullText_, Qt::ElideRight, avail);
+        if (QLabel::text() != elided) {
+            QLabel::setText(elided);
+        }
+    }
+
+    QString fullText_;
+};
+
+}  // namespace
 
 FilePane::FilePane(const EndpointSpec& endpoint,
                    TransferManager* transferMgr,
@@ -78,23 +135,28 @@ void FilePane::setupUi() {
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // 1. Header bar (Host info + negotiated protocol badges + reconnect)
+    // 1. Header bar (fixed 36px height so Local and Remote panes align to the exact pixel)
     auto* headerFrame = new QFrame(this);
     headerFrame->setObjectName(QStringLiteral("paneHeader"));
+    headerFrame->setFixedHeight(36);
+    headerFrame->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     auto* headerLayout = new QHBoxLayout(headerFrame);
-    headerLayout->setContentsMargins(8, 5, 8, 5);
+    headerLayout->setContentsMargins(8, 4, 8, 4);
     headerLayout->setSpacing(6);
 
     hostIconLabel_ = new QLabel(headerFrame);
+    hostIconLabel_->setFixedSize(16, 16);
     hostIconLabel_->setPixmap(
-        (endpoint_.isLocal() ? IconCache::computerIcon() : IconCache::serverIcon()).pixmap(18, 18));
+        (endpoint_.isLocal() ? IconCache::computerIcon() : IconCache::serverIcon()).pixmap(16, 16));
 
-    hostTitleLabel_ = new QLabel(
-        endpoint_.isLocal()
-            ? QStringLiteral("Local Computer")
-            : QStringLiteral("%1 (%2)").arg(endpoint_.session.displayTitle(),
-                                            endpoint_.session.displayAddress()),
-        headerFrame);
+    const QString fullTitle = endpoint_.isLocal()
+                                  ? QStringLiteral("Local Computer")
+                                  : QStringLiteral("%1 (%2)").arg(endpoint_.session.displayTitle(),
+                                                                  endpoint_.session.displayAddress());
+    hostTitleLabel_ = new ElidedLabel(fullTitle, headerFrame);
+    hostTitleLabel_->setObjectName(QStringLiteral("hostTitleLabel"));
+    hostTitleLabel_->setMinimumWidth(60);
+    hostTitleLabel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     QFont tf = hostTitleLabel_->font();
     tf.setBold(true);
     hostTitleLabel_->setFont(tf);
@@ -104,9 +166,14 @@ void FilePane::setupUi() {
     capBadgeLabel_->setToolTip(QStringLiteral("Detected transfer protocols on this endpoint"));
 
     statusLabel_ = new QLabel(headerFrame);
-    statusLabel_->setStyleSheet(QStringLiteral("font-size: 8.5pt; color: #94a3b8;"));
+    ThemeManager::setStatus(statusLabel_, "muted");
 
     reconnectBtn_ = new QToolButton(headerFrame);
+    reconnectBtn_->setObjectName(QStringLiteral("reconnectBtn"));
+    reconnectBtn_->setProperty("btnSize", QStringLiteral("compact"));
+    reconnectBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    reconnectBtn_->setIcon(IconCache::refreshIcon());
+    reconnectBtn_->setIconSize(QSize(13, 13));
     reconnectBtn_->setText(QStringLiteral("Reconnect"));
     reconnectBtn_->setVisible(endpoint_.isRemote());
     connect(reconnectBtn_, &QToolButton::clicked, this, &FilePane::reconnect);
@@ -119,25 +186,37 @@ void FilePane::setupUi() {
     headerLayout->addWidget(reconnectBtn_);
     root->addWidget(headerFrame);
 
-    // 2. Path navigation + per-host bookmarks + quick filter bar
+    // 2. Path navigation + per-host bookmarks + quick filter bar (fixed 38px height)
     auto* navBar = new QWidget(this);
+    navBar->setObjectName(QStringLiteral("paneNavBar"));
+    navBar->setFixedHeight(38);
     auto* navLayout = new QHBoxLayout(navBar);
     navLayout->setContentsMargins(6, 5, 6, 5);
     navLayout->setSpacing(4);
 
+    auto configureIconBtn = [](QToolButton* btn, const QString& objName, const QIcon& icon, const QString& tip) {
+        btn->setObjectName(objName);
+        btn->setProperty("btnSize", QStringLiteral("icon"));
+        btn->setProperty("variant", QStringLiteral("subtle"));
+        btn->setIcon(icon);
+        btn->setIconSize(QSize(16, 16));
+        btn->setToolTip(tip);
+    };
+
     backBtn_ = new QToolButton(navBar);
-    backBtn_->setText(QStringLiteral("←"));
-    backBtn_->setToolTip(QStringLiteral("Back (Alt+Left)"));
+    configureIconBtn(backBtn_, QStringLiteral("backBtn"), IconCache::arrowLeftIcon(),
+                     QStringLiteral("Back (Alt+Left)"));
+    backBtn_->setEnabled(false);
     connect(backBtn_, &QToolButton::clicked, this, &FilePane::goBack);
 
     upBtn_ = new QToolButton(navBar);
-    upBtn_->setText(QStringLiteral("↑"));
-    upBtn_->setToolTip(QStringLiteral("Parent Directory (Backspace)"));
+    configureIconBtn(upBtn_, QStringLiteral("upBtn"), IconCache::arrowUpIcon(),
+                     QStringLiteral("Parent Directory (Backspace)"));
     connect(upBtn_, &QToolButton::clicked, this, &FilePane::goUp);
 
     homeBtn_ = new QToolButton(navBar);
-    homeBtn_->setText(QStringLiteral("~"));
-    homeBtn_->setToolTip(QStringLiteral("Home Directory"));
+    configureIconBtn(homeBtn_, QStringLiteral("homeBtn"), IconCache::homeIcon(),
+                     QStringLiteral("Home Directory"));
     connect(homeBtn_, &QToolButton::clicked, this, &FilePane::goHome);
 
     pathEdit_ = new QLineEdit(navBar);
@@ -147,14 +226,22 @@ void FilePane::setupUi() {
     });
 
     starBtn_ = new QToolButton(navBar);
-    starBtn_->setText(QStringLiteral("☆"));
-    starBtn_->setToolTip(QStringLiteral("Bookmark current path for this host (Ctrl+D)"));
+    configureIconBtn(starBtn_, QStringLiteral("starBtn"), IconCache::starOutlineIcon(),
+                     QStringLiteral("Bookmark current path for this host (Ctrl+D)"));
     connect(starBtn_, &QToolButton::clicked, this, &FilePane::toggleBookmarkCurrentPath);
 
     bookmarksBtn_ = new QToolButton(navBar);
-    bookmarksBtn_->setText(QStringLiteral("★ ▾"));
+    bookmarksBtn_->setObjectName(QStringLiteral("bookmarksBtn"));
+    bookmarksBtn_->setProperty("btnSize", QStringLiteral("iconDropdown"));
+    bookmarksBtn_->setProperty("variant", QStringLiteral("subtle"));
+    bookmarksBtn_->setProperty("hasMenu", true);
+    bookmarksBtn_->setIcon(IconCache::bookmarksIcon());
+    bookmarksBtn_->setIconSize(QSize(15, 15));
     bookmarksBtn_->setToolTip(QStringLiteral("Open saved path bookmarks for this host"));
-    connect(bookmarksBtn_, &QToolButton::clicked, this, &FilePane::showBookmarksMenu);
+    bookmarksMenu_ = new QMenu(bookmarksBtn_);
+    connect(bookmarksMenu_, &QMenu::aboutToShow, this, &FilePane::populateBookmarksMenu);
+    bookmarksBtn_->setMenu(bookmarksMenu_);
+    bookmarksBtn_->setPopupMode(QToolButton::InstantPopup);
 
     filterEdit_ = new QLineEdit(navBar);
     filterEdit_->setPlaceholderText(QStringLiteral("Filter..."));
@@ -162,8 +249,8 @@ void FilePane::setupUi() {
     filterEdit_->setClearButtonEnabled(true);
 
     refreshBtn_ = new QToolButton(navBar);
-    refreshBtn_->setText(QStringLiteral("↻"));
-    refreshBtn_->setToolTip(QStringLiteral("Refresh (F5)"));
+    configureIconBtn(refreshBtn_, QStringLiteral("refreshBtn"), IconCache::refreshIcon(),
+                     QStringLiteral("Refresh (F5)"));
     connect(refreshBtn_, &QToolButton::clicked, this, &FilePane::refresh);
 
     navLayout->addWidget(backBtn_);
@@ -185,9 +272,9 @@ void FilePane::setupUi() {
     tableView_->setModel(proxy_);
     tableView_->sortByColumn(FileListModel::ColName, Qt::AscendingOrder);
     tableView_->setColumnWidth(FileListModel::ColName, 195);
-    tableView_->setColumnWidth(FileListModel::ColSize, 76);
-    tableView_->setColumnWidth(FileListModel::ColModified, 138);
-    tableView_->setColumnWidth(FileListModel::ColPermissions, 96);
+    tableView_->setColumnWidth(FileListModel::ColSize, 82);
+    tableView_->setColumnWidth(FileListModel::ColModified, 146);
+    tableView_->setColumnWidth(FileListModel::ColPermissions, 108);
     tableView_->setContextMenuPolicy(Qt::CustomContextMenu);
     tableView_->installEventFilter(this);
     pathEdit_->installEventFilter(this);
@@ -212,10 +299,10 @@ void FilePane::setupUi() {
 
     root->addWidget(tableView_, 1);
 
-    // 4. Compact pane footer
+    // 4. Compact pane footer (24px height, top hairline border via #paneFooter)
     footerLabel_ = new QLabel(QStringLiteral("0 items"), this);
-    footerLabel_->setContentsMargins(8, 3, 8, 3);
-    footerLabel_->setStyleSheet(QStringLiteral("font-size: 8.5pt; color: #94a3b8;"));
+    footerLabel_->setObjectName(QStringLiteral("paneFooter"));
+    footerLabel_->setFixedHeight(24);
     root->addWidget(footerLabel_);
 }
 
@@ -283,11 +370,11 @@ void FilePane::postRemoteOp(std::function<void(SshClient&)> op) {
 void FilePane::updateHeaderUi(const QString& statusText, bool isError) {
     statusLabel_->setText(statusText);
     if (isError) {
-        statusLabel_->setStyleSheet(QStringLiteral("font-size: 8.5pt; color: #f87171; font-weight: 600;"));
+        ThemeManager::setStatus(statusLabel_, "error");
     } else if (connected_) {
-        statusLabel_->setStyleSheet(QStringLiteral("font-size: 8.5pt; color: #4ade80;"));
+        ThemeManager::setStatus(statusLabel_, "ok");
     } else {
-        statusLabel_->setStyleSheet(QStringLiteral("font-size: 8.5pt; color: #facc15;"));
+        ThemeManager::setStatus(statusLabel_, "warn");
     }
 }
 
@@ -315,6 +402,9 @@ void FilePane::applyDirectoryEntries(const QString& path, std::vector<FileEntry>
     currentPath_ = path;
     pathEdit_->setText(currentPath_);
     tableView_->setContextInfo(endpoint_, currentPath_);
+    if (backBtn_) {
+        backBtn_->setEnabled(!history_.empty());
+    }
 
     bool includeUp = false;
     QString parent;
@@ -336,13 +426,15 @@ void FilePane::updateBookmarkButtonState() {
     if (!starBtn_) return;
     const bool bookmarked = sessionStore_ && !currentPath_.isEmpty() &&
                             sessionStore_->hasBookmark(endpoint_, currentPath_);
-    starBtn_->setText(bookmarked ? QStringLiteral("★") : QStringLiteral("☆"));
-    starBtn_->setObjectName(bookmarked ? QStringLiteral("starBtnActive") : QString());
+    starBtn_->setIcon(bookmarked ? IconCache::starFilledIcon() : IconCache::starOutlineIcon());
+    starBtn_->setObjectName(bookmarked ? QStringLiteral("starBtnActive") : QStringLiteral("starBtn"));
+    starBtn_->setProperty("active", bookmarked);
     starBtn_->setToolTip(bookmarked
                              ? QStringLiteral("Current path is bookmarked (click to remove)")
                              : QStringLiteral("Bookmark current path for this host (Ctrl+D)"));
     starBtn_->style()->unpolish(starBtn_);
     starBtn_->style()->polish(starBtn_);
+    starBtn_->update();
 }
 
 void FilePane::bookmarkPath(const QString& path, const QString& suggestedName) {
@@ -384,16 +476,18 @@ void FilePane::toggleBookmarkCurrentPath() {
     }
 }
 
-void FilePane::showBookmarksMenu() {
-    QMenu menu(this);
+void FilePane::populateBookmarksMenu() {
+    if (!bookmarksMenu_) return;
+    bookmarksMenu_->clear();
     if (sessionStore_) {
         const auto bms = sessionStore_->bookmarksFor(endpoint_);
         if (bms.empty()) {
-            QAction* empty = menu.addAction(QStringLiteral("(No bookmarks for %1 yet)").arg(endpoint_.label()));
+            QAction* empty = bookmarksMenu_->addAction(
+                QStringLiteral("(No bookmarks for %1 yet)").arg(endpoint_.label()));
             empty->setEnabled(false);
         } else {
             for (const PathBookmark& bm : bms) {
-                QAction* a = menu.addAction(
+                QAction* a = bookmarksMenu_->addAction(
                     IconCache::folderIcon(),
                     QStringLiteral("%1   (%2)").arg(bm.displayName(), bm.path));
                 a->setToolTip(bm.path);
@@ -403,16 +497,21 @@ void FilePane::showBookmarksMenu() {
             }
         }
     }
-    menu.addSeparator();
-    QAction* addCur = menu.addAction(QStringLiteral("★ Bookmark Current Path...\tCtrl+D"));
+    bookmarksMenu_->addSeparator();
+    QAction* addCur = bookmarksMenu_->addAction(
+        IconCache::starFilledIcon(), QStringLiteral("Bookmark Current Path...\tCtrl+D"));
     addCur->setEnabled(sessionStore_ != nullptr && !currentPath_.isEmpty());
     connect(addCur, &QAction::triggered, this, [this]() { bookmarkPath(currentPath_); });
 
-    QAction* mgr = menu.addAction(QStringLiteral("Manage Bookmarks..."));
+    QAction* mgr = bookmarksMenu_->addAction(QStringLiteral("Manage Bookmarks..."));
     mgr->setEnabled(sessionStore_ != nullptr);
     connect(mgr, &QAction::triggered, this, &FilePane::openBookmarkManager);
+}
 
-    menu.exec(bookmarksBtn_->mapToGlobal(QPoint(0, bookmarksBtn_->height())));
+void FilePane::showBookmarksMenu() {
+    if (bookmarksBtn_) {
+        bookmarksBtn_->showMenu();
+    }
 }
 
 void FilePane::openBookmarkManager() {
@@ -810,7 +909,8 @@ void FilePane::showContextMenu(const QPoint& pos) {
         }
         menu.addSeparator();
         if (sel.size() == 1 && sel.front().isDir && sessionStore_) {
-            QAction* actBmDir = menu.addAction(QStringLiteral("★ Bookmark This Folder..."));
+            QAction* actBmDir = menu.addAction(
+                IconCache::starFilledIcon(), QStringLiteral("Bookmark This Folder..."));
             connect(actBmDir, &QAction::triggered, this, [this, entry = sel.front()]() {
                 bookmarkPath(entry.fullPath, entry.name);
             });

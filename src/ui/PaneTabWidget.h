@@ -4,6 +4,7 @@
 
 #include <QTabWidget>
 
+class QMenu;
 class QToolButton;
 
 namespace xsync {
@@ -32,7 +33,7 @@ signals:
     void openSessionManagerRequested(xsync::PaneTabWidget* targetSide);
 
 private:
-    void showAddRemoteMenu();
+    void populateAddRemoteMenu();
     void onTabCloseRequested(int index);
 
     QString sideLabel_;
@@ -40,6 +41,7 @@ private:
     TransferManager* transferMgr_ = nullptr;
     QToolButton* addLocalBtn_ = nullptr;
     QToolButton* addRemoteBtn_ = nullptr;
+    QMenu* addRemoteMenu_ = nullptr;
 };
 
 }  // namespace xsync

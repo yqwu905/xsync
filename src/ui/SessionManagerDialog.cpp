@@ -19,7 +19,8 @@ namespace xsync {
 SessionManagerDialog::SessionManagerDialog(SessionStore* store, QWidget* parent)
     : QDialog(parent), store_(store) {
     setWindowTitle(QStringLiteral("Session Manager — Registered Remote Machines"));
-    resize(760, 480);
+    resize(860, 500);
+    setMinimumSize(760, 440);
     setupUi();
     rebuildTree();
     if (store_) {
@@ -29,20 +30,23 @@ SessionManagerDialog::SessionManagerDialog(SessionStore* store, QWidget* parent)
 
 void SessionManagerDialog::setupUi() {
     auto* root = new QVBoxLayout(this);
-    root->setSpacing(8);
+    root->setContentsMargins(12, 12, 12, 12);
+    root->setSpacing(10);
 
-    // Search + Add/Import top bar
+    // Search + Add/Import top bar (uniform 28px tier)
     auto* topBar = new QHBoxLayout();
+    topBar->setSpacing(6);
     searchEdit_ = new QLineEdit(this);
     searchEdit_->setPlaceholderText(QStringLiteral("Search saved hosts by name, IP, user, or group..."));
     searchEdit_->setClearButtonEnabled(true);
     connect(searchEdit_, &QLineEdit::textChanged, this, &SessionManagerDialog::rebuildTree);
 
     auto* newBtn = new QPushButton(QStringLiteral("+ Register Host"), this);
-    newBtn->setObjectName(QStringLiteral("primaryBtn"));
+    newBtn->setMinimumWidth(116);
     connect(newBtn, &QPushButton::clicked, this, &SessionManagerDialog::onNewHost);
 
     auto* importBtn = new QPushButton(QStringLiteral("Import ~/.ssh/config"), this);
+    importBtn->setMinimumWidth(142);
     connect(importBtn, &QPushButton::clicked, this, &SessionManagerDialog::onImportSshConfig);
 
     topBar->addWidget(searchEdit_, 1);
@@ -50,15 +54,29 @@ void SessionManagerDialog::setupUi() {
     topBar->addWidget(importBtn);
     root->addLayout(topBar);
 
-    // Grouped session tree
+    // Grouped session tree (uniform 28px rows, non-clipping column widths)
     tree_ = new QTreeWidget(this);
     tree_->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Host / Address"),
                             QStringLiteral("Auth"), QStringLiteral("Protocol Policy"),
                             QStringLiteral("Remote ↔ Remote")});
     tree_->setAlternatingRowColors(true);
+    tree_->setUniformRowHeights(true);
     tree_->setRootIsDecorated(true);
-    tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    tree_->header()->setHighlightSections(false);
+    tree_->header()->setStretchLastSection(false);
+    tree_->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     tree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    tree_->header()->setSectionResizeMode(2, QHeaderView::Interactive);
+    tree_->header()->setSectionResizeMode(3, QHeaderView::Interactive);
+    tree_->header()->setSectionResizeMode(4, QHeaderView::Interactive);
+    tree_->setColumnWidth(0, 165);
+    tree_->setColumnWidth(2, 86);
+    tree_->setColumnWidth(3, 198);
+    tree_->setColumnWidth(4, 150);
+    connect(tree_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem*, QTreeWidgetItem*) {
+        updateButtonStates();
+    });
+    connect(tree_, &QTreeWidget::itemSelectionChanged, this, &SessionManagerDialog::updateButtonStates);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
         if (item && !item->data(0, Qt::UserRole).toString().isEmpty()) {
             openSelected(OpenTarget::ActivePane);
@@ -66,17 +84,27 @@ void SessionManagerDialog::setupUi() {
     });
     root->addWidget(tree_, 1);
 
-    // Action footer bar
+    // Action footer bar (uniform 30px dialog footer tier, single #primaryBtn CTA)
     auto* botBar = new QHBoxLayout();
+    botBar->setSpacing(6);
     editBtn_ = new QPushButton(QStringLiteral("Edit"), this);
+    editBtn_->setProperty("btnSize", QStringLiteral("dialog"));
     dupBtn_ = new QPushButton(QStringLiteral("Duplicate"), this);
+    dupBtn_->setProperty("btnSize", QStringLiteral("dialog"));
     delBtn_ = new QPushButton(QStringLiteral("Delete"), this);
+    delBtn_->setProperty("btnSize", QStringLiteral("dialog"));
+    delBtn_->setProperty("variant", QStringLiteral("danger"));
 
-    openLeftBtn_ = new QPushButton(QStringLiteral("Open in Left Pane"), this);
-    openRightBtn_ = new QPushButton(QStringLiteral("Open in Right Pane"), this);
+    openLeftBtn_ = new QPushButton(QStringLiteral("Open Left"), this);
+    openLeftBtn_->setProperty("btnSize", QStringLiteral("dialog"));
+    openRightBtn_ = new QPushButton(QStringLiteral("Open Right"), this);
     openRightBtn_->setObjectName(QStringLiteral("primaryBtn"));
-    openWinBtn_ = new QPushButton(QStringLiteral("Open in New Window"), this);
+    openRightBtn_->setProperty("variant", QStringLiteral("primary"));
+    openRightBtn_->setProperty("btnSize", QStringLiteral("dialog"));
+    openWinBtn_ = new QPushButton(QStringLiteral("New Window"), this);
+    openWinBtn_->setProperty("btnSize", QStringLiteral("dialog"));
     auto* closeBtn = new QPushButton(QStringLiteral("Close"), this);
+    closeBtn->setProperty("btnSize", QStringLiteral("dialog"));
 
     connect(editBtn_, &QPushButton::clicked, this, &SessionManagerDialog::onEditHost);
     connect(dupBtn_, &QPushButton::clicked, this, &SessionManagerDialog::onDuplicateHost);
@@ -99,7 +127,10 @@ void SessionManagerDialog::setupUi() {
 
 void SessionManagerDialog::rebuildTree() {
     tree_->clear();
-    if (!store_) return;
+    if (!store_) {
+        updateButtonStates();
+        return;
+    }
 
     const QString filter = searchEdit_->text().trimmed();
     QMap<QString, QTreeWidgetItem*> groupItems;
@@ -117,6 +148,7 @@ void SessionManagerDialog::rebuildTree() {
         if (!grpNode) {
             grpNode = new QTreeWidgetItem(tree_, {grp});
             grpNode->setIcon(0, IconCache::folderIcon());
+            grpNode->setSizeHint(0, QSize(-1, 28));
             QFont f = grpNode->font(0);
             f.setBold(true);
             grpNode->setFont(0, f);
@@ -131,14 +163,31 @@ void SessionManagerDialog::rebuildTree() {
             r2rPolicyToString(p.r2rPolicy)
         });
         item->setIcon(0, IconCache::serverIcon());
+        item->setSizeHint(0, QSize(-1, 28));
         item->setData(0, Qt::UserRole, p.id);
     }
     tree_->expandAll();
+    updateButtonStates();
+}
+
+void SessionManagerDialog::updateButtonStates() {
+    const bool hasHost = selectedProfile().has_value();
+    if (editBtn_) editBtn_->setEnabled(hasHost);
+    if (dupBtn_) dupBtn_->setEnabled(hasHost);
+    if (delBtn_) delBtn_->setEnabled(hasHost);
+    if (openLeftBtn_) openLeftBtn_->setEnabled(hasHost);
+    if (openRightBtn_) openRightBtn_->setEnabled(hasHost);
+    if (openWinBtn_) openWinBtn_->setEnabled(hasHost);
 }
 
 std::optional<SessionProfile> SessionManagerDialog::selectedProfile() const {
-    if (!store_) return std::nullopt;
+    if (!store_ || !tree_) return std::nullopt;
+    const auto selected = tree_->selectedItems();
+    if (selected.isEmpty()) return std::nullopt;
     QTreeWidgetItem* item = tree_->currentItem();
+    if (!item || !selected.contains(item)) {
+        item = selected.first();
+    }
     if (!item) return std::nullopt;
     const QString id = item->data(0, Qt::UserRole).toString();
     if (id.isEmpty()) return std::nullopt;

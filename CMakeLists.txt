@@ -122,6 +122,8 @@ endif()
 add_library(xsync_ui STATIC
     src/ui/IconCache.h
     src/ui/IconCache.cpp
+    src/ui/ThemeManager.h
+    src/ui/ThemeManager.cpp
     src/ui/FileListModel.h
     src/ui/FileListModel.cpp
     src/ui/FileTableView.h
@@ -191,4 +193,13 @@ if(XSYNC_BUILD_TESTS)
     add_executable(test_transfer_local tests/test_transfer_local.cpp)
     target_link_libraries(test_transfer_local PRIVATE xsync_ui Qt6::Test)
     add_test(NAME test_transfer_local COMMAND test_transfer_local)
+
+    add_executable(test_ui tests/test_ui.cpp)
+    target_link_libraries(test_ui PRIVATE xsync_ui Qt6::Test)
+    if(MSVC)
+        target_compile_options(test_ui PRIVATE /W3 /utf-8)
+    else()
+        target_compile_options(test_ui PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+    add_test(NAME test_ui COMMAND test_ui)
 endif()
