@@ -137,8 +137,23 @@ void MainWindow::setupMenus() {
     transferMenu->addAction(QStringLiteral("Transfer Selected to Opposite Pane"),
                             QKeySequence(QStringLiteral("Ctrl+Return")),
                             this, &MainWindow::onTransferSelectedClicked);
+    transferMenu->addAction(QStringLiteral("Retry All Failed"), this, [this]() {
+        if (transferMgr_) transferMgr_->retryAllFailed();
+    });
     transferMenu->addAction(QStringLiteral("Clear Completed History"), this, [this]() {
         if (transferMgr_) transferMgr_->clearFinished();
+    });
+
+    auto* bmMenu = menuBar()->addMenu(QStringLiteral("&Bookmarks"));
+    bmMenu->addAction(QStringLiteral("Bookmark Current Path..."), QKeySequence(QStringLiteral("Ctrl+D")),
+                      this, [this]() {
+                          if (FilePane* p = activePane()) p->bookmarkPath(p->currentPath());
+                      });
+    bmMenu->addAction(QStringLiteral("Show Host Bookmarks"), this, [this]() {
+        if (FilePane* p = activePane()) p->showBookmarksMenu();
+    });
+    bmMenu->addAction(QStringLiteral("Manage Host Bookmarks..."), this, [this]() {
+        if (FilePane* p = activePane()) p->openBookmarkManager();
     });
 
     auto* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
@@ -540,13 +555,15 @@ void MainWindow::updateStatusStats() {
     if (transferMgr_) {
         const int active = transferMgr_->activeCount();
         const int queued = transferMgr_->queuedCount();
+        const int failed = transferMgr_->failedCount();
         const double speed = transferMgr_->aggregateSpeedBytesPerSec();
-        if (active > 0 || queued > 0) {
-            transferStatusLabel_->setText(
-                QStringLiteral("Active: %1 | Queued: %2 | Speed: %3")
-                    .arg(active)
-                    .arg(queued)
-                    .arg(formatSpeed(speed)));
+        if (active > 0 || queued > 0 || failed > 0) {
+            QString text = QStringLiteral("Active: %1 | Queued: %2 | Speed: %3")
+                               .arg(active)
+                               .arg(queued)
+                               .arg(formatSpeed(speed));
+            if (failed > 0) text += QStringLiteral(" | Failed: %1").arg(failed);
+            transferStatusLabel_->setText(text);
         } else {
             transferStatusLabel_->setText(QStringLiteral("Queue Idle"));
         }

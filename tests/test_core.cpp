@@ -5,8 +5,10 @@
 #include "core/Types.h"
 #include "ui/FileListModel.h"
 #include "ui/FileTableView.h"
+#include "ui/SessionEditDialog.h"
 
 #include <QDir>
+#include <QPushButton>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -275,6 +277,75 @@ Host gpu-train
         QCOMPARE(decoded->isCut, true);
         QCOMPARE(decoded->entries.size(), size_t(1));
         QCOMPARE(decoded->entries[0].fullPath, QStringLiteral("/data/models/weights.pt"));
+    }
+
+    void testSessionEditBrowseAlwaysEnabled() {
+        // Default new profile has AuthType::Password — Browse... button MUST still be enabled
+        SessionProfile p = SessionProfile::createNew();
+        QCOMPARE(p.authType, AuthType::Password);
+
+        SessionEditDialog dlg(p, {QStringLiteral("Default")});
+        auto* browseBtn = dlg.findChild<QPushButton*>(QStringLiteral("keyBrowseBtn"));
+        QVERIFY(browseBtn != nullptr);
+        QVERIFY(browseBtn->isEnabled());
+    }
+
+    void testPerHostPathBookmarksPersistence() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString storePath = dir.filePath(QStringLiteral("sessions.json"));
+
+        SessionProfile hostA = SessionProfile::createNew();
+        hostA.name = QStringLiteral("GPU-A");
+        hostA.host = QStringLiteral("10.0.0.10");
+        hostA.username = QStringLiteral("ubuntu");
+
+        SessionProfile hostB = SessionProfile::createNew();
+        hostB.name = QStringLiteral("GPU-B");
+        hostB.host = QStringLiteral("10.0.0.20");
+        hostB.username = QStringLiteral("ubuntu");
+
+        SessionProfile quickC = SessionProfile::createNew();
+        quickC.host = QStringLiteral("10.0.0.30");
+        quickC.username = QStringLiteral("root");
+
+        EndpointSpec epA = EndpointSpec::remote(hostA);
+        EndpointSpec epB = EndpointSpec::remote(hostB);
+        EndpointSpec epQuickC = EndpointSpec::remote(quickC);
+        EndpointSpec epLocal = EndpointSpec::local();
+
+        {
+            SessionStore s1(storePath);
+            s1.upsertSession(hostA);
+            s1.upsertSession(hostB);
+
+            s1.addBookmark(epA, {QStringLiteral("Checkpoints"), QStringLiteral("/data/ckpts")});
+            s1.addBookmark(epA, {QStringLiteral("Logs"), QStringLiteral("/var/log/train")});
+            s1.addBookmark(epB, {QStringLiteral("Datasets"), QStringLiteral("/mnt/datasets")});
+            s1.addBookmark(epQuickC, {QStringLiteral("Tmp"), QStringLiteral("/tmp")});
+            s1.addBookmark(epLocal, {QStringLiteral("Home"), QDir::homePath()});
+
+            QVERIFY(s1.hasBookmark(epA, QStringLiteral("/data/ckpts")));
+            QVERIFY(!s1.hasBookmark(epB, QStringLiteral("/data/ckpts")));
+            QCOMPARE(s1.bookmarksFor(epA).size(), size_t(2));
+            QCOMPARE(s1.bookmarksFor(epB).size(), size_t(1));
+        }
+
+        // Reload from disk and verify per-host persistence & isolation
+        SessionStore s2(storePath);
+        QVERIFY(s2.load());
+        QCOMPARE(s2.bookmarksFor(epA).size(), size_t(2));
+        QCOMPARE(s2.bookmarksFor(epA)[0].name, QStringLiteral("Checkpoints"));
+        QCOMPARE(s2.bookmarksFor(epA)[0].path, QStringLiteral("/data/ckpts"));
+        QCOMPARE(s2.bookmarksFor(epB).size(), size_t(1));
+        QCOMPARE(s2.bookmarksFor(epB)[0].path, QStringLiteral("/mnt/datasets"));
+        QCOMPARE(s2.bookmarksFor(epQuickC).size(), size_t(1));
+        QCOMPARE(s2.bookmarksFor(epLocal).size(), size_t(1));
+
+        // Remove one bookmark on Host A without affecting Host B
+        QVERIFY(s2.removeBookmark(epA, QStringLiteral("/data/ckpts")));
+        QCOMPARE(s2.bookmarksFor(epA).size(), size_t(1));
+        QCOMPARE(s2.bookmarksFor(epB).size(), size_t(1));
     }
 };
 

@@ -3,6 +3,7 @@
 #include "core/TransferManager.h"
 #include "ui/FileListModel.h"
 #include "ui/FileTableView.h"
+#include "ui/TransferQueueWidget.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -59,7 +60,7 @@ private slots:
         t1.itemName = QStringLiteral("big.bin");
         mgr.enqueueTask(t1);
 
-        // 2. Copy nested directory recursively
+        // 2. Copy nested directory recursively (expands into batch + 1 child file task)
         TransferTask t2;
         t2.sourceEndpoint = EndpointSpec::local();
         t2.destEndpoint = EndpointSpec::local();
@@ -94,6 +95,116 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(completedCount, 3, 10000);
         QVERIFY(!QFile::exists(srcRoot + QStringLiteral("/big.bin")));
         QVERIFY(QFile::exists(dstRoot + QStringLiteral("/moved/big.bin")));
+    }
+
+    void testDirectoryBatchExpansionPauseRemoveAndErrors() {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+
+        const QString srcFolder = tmp.filePath(QStringLiteral("dataset"));
+        const QString dstRoot1 = tmp.filePath(QStringLiteral("out1"));
+        const QString dstRoot2 = tmp.filePath(QStringLiteral("out2"));
+        QDir().mkpath(srcFolder + QStringLiteral("/nested"));
+        QDir().mkpath(dstRoot1);
+        QDir().mkpath(dstRoot2);
+
+        const QStringList relFiles = {
+            QStringLiteral("a.txt"),
+            QStringLiteral("b.txt"),
+            QStringLiteral("nested/c.txt"),
+            QStringLiteral("nested/d.txt")
+        };
+        for (const QString& rel : relFiles) {
+            QFile f(srcFolder + QLatin1Char('/') + rel);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(rel.toUtf8());
+        }
+
+        TransferManager mgr;
+        TransferQueueModel model(&mgr);
+        mgr.setPaused(true);
+
+        // Enqueue directory while paused -> expands into 1 batch with 4 individual file children
+        TransferTask dirTask;
+        dirTask.sourceEndpoint = EndpointSpec::local();
+        dirTask.destEndpoint = EndpointSpec::local();
+        dirTask.sourcePath = srcFolder;
+        dirTask.destDir = dstRoot1;
+        dirTask.itemName = QStringLiteral("dataset");
+        dirTask.isDir = true;
+        const uint64_t batchId = mgr.enqueueTask(dirTask);
+
+        QTRY_VERIFY_WITH_TIMEOUT(mgr.tasksInBatch(batchId).size() == 4, 5000);
+        QCOMPARE(model.rowCount(), 1);
+        const QModelIndex batchIdx = model.index(0, 0);
+        QCOMPARE(model.rowCount(batchIdx), 4);
+        QCOMPARE(model.data(model.index(0, TransferQueueModel::ColFiles)).toString(),
+                 QStringLiteral("0 / 4"));
+
+        // 1. Selective Pause & Selective Delete inside the directory batch!
+        const auto children = mgr.tasksInBatch(batchId);
+        const uint64_t pausedChildId = children[0].id;
+        const QString pausedRel = children[0].relativePath;
+        const uint64_t removedChildId = children[1].id;
+        const QString removedRel = children[1].relativePath;
+
+        mgr.pauseTask(pausedChildId);
+        mgr.removeTask(removedChildId);
+
+        QCOMPARE(model.rowCount(batchIdx), 3);
+        const TransferBatch* bMid = mgr.findBatch(batchId);
+        QVERIFY(bMid != nullptr);
+        QCOMPARE(bMid->totalFiles, 3);
+        QCOMPARE(bMid->pausedFiles, 1);
+
+        // Resume queue -> remaining 2 non-paused files transfer, paused file stays Paused, deleted file skipped!
+        mgr.setPaused(false);
+        QTRY_VERIFY_WITH_TIMEOUT(mgr.findBatch(batchId) && mgr.findBatch(batchId)->completedFiles == 2, 5000);
+        QCOMPARE(mgr.findBatch(batchId)->pausedFiles, 1);
+        QCOMPARE(mgr.findBatch(batchId)->status, TransferStatus::Paused);
+        QVERIFY(!QFile::exists(dstRoot1 + QStringLiteral("/dataset/") + removedRel));
+        QVERIFY(!QFile::exists(dstRoot1 + QStringLiteral("/dataset/") + pausedRel));
+
+        // Now resume the individually paused file -> batch completes 3 / 3!
+        mgr.resumeTask(pausedChildId);
+        QTRY_VERIFY_WITH_TIMEOUT(mgr.findBatch(batchId) && mgr.findBatch(batchId)->status == TransferStatus::Completed, 5000);
+        QCOMPARE(model.data(model.index(0, TransferQueueModel::ColFiles)).toString(),
+                 QStringLiteral("3 / 3"));
+        QVERIFY(QFile::exists(dstRoot1 + QStringLiteral("/dataset/") + pausedRel));
+
+        // 2. Per-file error reporting: missing source file records exact error while sibling succeeds
+        TransferTask badFile;
+        badFile.sourceEndpoint = EndpointSpec::local();
+        badFile.destEndpoint = EndpointSpec::local();
+        badFile.sourcePath = tmp.filePath(QStringLiteral("does_not_exist.bin"));
+        badFile.destDir = dstRoot2;
+        badFile.itemName = QStringLiteral("does_not_exist.bin");
+        const uint64_t badId = mgr.enqueueTask(badFile);
+
+        TransferTask goodFile;
+        goodFile.sourceEndpoint = EndpointSpec::local();
+        goodFile.destEndpoint = EndpointSpec::local();
+        goodFile.sourcePath = srcFolder + QStringLiteral("/a.txt");
+        goodFile.destDir = dstRoot2;
+        goodFile.itemName = QStringLiteral("a.txt");
+        const uint64_t goodId = mgr.enqueueTask(goodFile);
+
+        QTRY_VERIFY_WITH_TIMEOUT(
+            mgr.findTask(badId) && mgr.findTask(badId)->status == TransferStatus::Failed &&
+            mgr.findTask(goodId) && mgr.findTask(goodId)->status == TransferStatus::Completed,
+            5000);
+
+        QVERIFY(!mgr.findTask(badId)->errorMessage.isEmpty());
+        QCOMPARE(mgr.failedCount(), 1);
+
+        // Verify TransferQueueFilterProxy FilterFailed isolates the failed file
+        TransferQueueFilterProxy failedFilter;
+        failedFilter.setSourceModel(&model);
+        failedFilter.setFilterMode(TransferQueueFilterProxy::FilterFailed);
+        QCOMPARE(failedFilter.rowCount(), 1);
+        QVERIFY(failedFilter.data(failedFilter.index(0, TransferQueueModel::ColStatus))
+                    .toString()
+                    .contains(QStringLiteral("Error:")));
     }
 
     void testExplorerClipboardCtrlCVIntegration() {

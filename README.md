@@ -17,6 +17,8 @@ A lightweight, leak-free native C++17 / Qt6 Widgets alternative to Xftp supporti
 - **Xftp 风格高效交互**
   - **双栏多标签 + 多窗口传输**：左右任意一侧均可开多个标签（每个标签独立为本地或任意远端机器），`Ctrl+N` 随时开新独立窗口，共享机器配置与并发传输队列。
   - **注册远端机器 (Session Manager)**：分组管理、关键词搜索、一键导入 `~/.ssh/config`、支持密码（Windows DPAPI / Linux AES-256-GCM 加密落盘）、私钥（ED25519 / ECDSA / RSA）、SSH Agent、JumpHost 跳板机与实时协议探测测试。
+  - **按机器独立的路径收藏夹 (`☆` / `★ ▾` / `Ctrl+D`)**：支持为每台远端机器与本地分别收藏常用路径，下拉一键直达，右键文件夹可快速收藏，支持收藏夹管理器编辑与排序。
+  - **Xftp 风格树形传输队列**：传输目录自动展开为「目录汇总行 + 逐文件子项」，实时显示完成/总文件数与出错数，支持单独暂停/恢复/删除/重试其中任意文件，双击或筛选 `Failed Only` 查看每个文件的完整错误信息。
   - **直接拖拽 (Drag & Drop)**：支持从 Windows 资源管理器直接拖文件/文件夹到远端窗口上传，支持左右栏/跨标签/跨窗口直接互拖传输。
   - **本地 `Ctrl+C` / `Ctrl+V`**：在 Windows 资源管理器中 `Ctrl+C` 复制文件/文件夹后，切到 `xsync` 任意远端窗口按 `Ctrl+V` 即可直接上传；也支持在 `xsync` 窗口之间 `Ctrl+C` / `Ctrl+X` / `Ctrl+V`（含远端到远端）。
 
@@ -27,6 +29,7 @@ A lightweight, leak-free native C++17 / Qt6 Widgets alternative to Xftp supporti
 | `Ctrl+O` | 打开会话管理器（注册/连接远端机器） |
 | `Ctrl+N` | 打开新的独立传输窗口 |
 | `Ctrl+T` | 在当前侧新建本地标签页 |
+| `Ctrl+D` | 收藏当前路径到当前主机收藏夹 |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | 复制 / 剪切 / 粘贴文件（完全兼容 Windows 资源管理器） |
 | `Ctrl+Enter` | 传输选中文件到对侧窗口 |
 | `F5` | 刷新当前目录 |

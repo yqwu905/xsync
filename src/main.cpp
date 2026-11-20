@@ -68,12 +68,14 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion(QStringLiteral("1.0.0"));
     app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 
+    qRegisterMetaType<xsync::PathBookmark>("xsync::PathBookmark");
     qRegisterMetaType<xsync::FileEntry>("xsync::FileEntry");
     qRegisterMetaType<std::vector<xsync::FileEntry>>("std::vector<xsync::FileEntry>");
     qRegisterMetaType<xsync::EndpointCapabilities>("xsync::EndpointCapabilities");
     qRegisterMetaType<xsync::EndpointSpec>("xsync::EndpointSpec");
     qRegisterMetaType<xsync::SessionProfile>("xsync::SessionProfile");
     qRegisterMetaType<xsync::TransferTask>("xsync::TransferTask");
+    qRegisterMetaType<xsync::TransferBatch>("xsync::TransferBatch");
     qRegisterMetaType<xsync::TransferProtocol>("xsync::TransferProtocol");
     qRegisterMetaType<xsync::TransferStatus>("xsync::TransferStatus");
 

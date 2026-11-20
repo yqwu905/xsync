@@ -134,6 +134,8 @@ add_library(xsync_ui STATIC
     src/ui/SessionEditDialog.cpp
     src/ui/SessionManagerDialog.h
     src/ui/SessionManagerDialog.cpp
+    src/ui/BookmarkManagerDialog.h
+    src/ui/BookmarkManagerDialog.cpp
     src/ui/TransferQueueWidget.h
     src/ui/TransferQueueWidget.cpp
     src/ui/MainWindow.h

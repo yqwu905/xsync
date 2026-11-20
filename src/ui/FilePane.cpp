@@ -2,8 +2,10 @@
 
 #include "core/FileSystemBackend.h"
 #include "core/ProtocolNegotiator.h"
+#include "core/SessionStore.h"
 #include "core/SshClient.h"
 #include "core/TransferManager.h"
+#include "ui/BookmarkManagerDialog.h"
 #include "ui/FileListModel.h"
 #include "ui/IconCache.h"
 
@@ -21,6 +23,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QStyle>
 #include <QToolButton>
 #include <QUrl>
 #include <QUuid>
@@ -30,13 +33,23 @@ namespace xsync {
 
 FilePane::FilePane(const EndpointSpec& endpoint,
                    TransferManager* transferMgr,
+                   SessionStore* sessionStore,
                    const QString& initialPath,
                    QWidget* parent)
     : QWidget(parent),
       paneId_(QUuid::createUuid().toString(QUuid::WithoutBraces)),
       endpoint_(endpoint),
-      transferMgr_(transferMgr) {
+      transferMgr_(transferMgr),
+      sessionStore_(sessionStore) {
     setupUi();
+
+    if (sessionStore_) {
+        connect(sessionStore_, &SessionStore::bookmarksChanged, this, [this](const QString& key) {
+            if (key == endpoint_.cacheKey()) {
+                updateBookmarkButtonState();
+            }
+        });
+    }
 
     if (endpoint_.isLocal()) {
         connected_ = true;
@@ -106,7 +119,7 @@ void FilePane::setupUi() {
     headerLayout->addWidget(reconnectBtn_);
     root->addWidget(headerFrame);
 
-    // 2. Path navigation + quick filter bar
+    // 2. Path navigation + per-host bookmarks + quick filter bar
     auto* navBar = new QWidget(this);
     auto* navLayout = new QHBoxLayout(navBar);
     navLayout->setContentsMargins(6, 5, 6, 5);
@@ -133,9 +146,19 @@ void FilePane::setupUi() {
         navigateTo(pathEdit_->text(), true);
     });
 
+    starBtn_ = new QToolButton(navBar);
+    starBtn_->setText(QStringLiteral("☆"));
+    starBtn_->setToolTip(QStringLiteral("Bookmark current path for this host (Ctrl+D)"));
+    connect(starBtn_, &QToolButton::clicked, this, &FilePane::toggleBookmarkCurrentPath);
+
+    bookmarksBtn_ = new QToolButton(navBar);
+    bookmarksBtn_->setText(QStringLiteral("★ ▾"));
+    bookmarksBtn_->setToolTip(QStringLiteral("Open saved path bookmarks for this host"));
+    connect(bookmarksBtn_, &QToolButton::clicked, this, &FilePane::showBookmarksMenu);
+
     filterEdit_ = new QLineEdit(navBar);
     filterEdit_->setPlaceholderText(QStringLiteral("Filter..."));
-    filterEdit_->setMaximumWidth(150);
+    filterEdit_->setMaximumWidth(135);
     filterEdit_->setClearButtonEnabled(true);
 
     refreshBtn_ = new QToolButton(navBar);
@@ -147,6 +170,8 @@ void FilePane::setupUi() {
     navLayout->addWidget(upBtn_);
     navLayout->addWidget(homeBtn_);
     navLayout->addWidget(pathEdit_, 1);
+    navLayout->addWidget(starBtn_);
+    navLayout->addWidget(bookmarksBtn_);
     navLayout->addWidget(filterEdit_);
     navLayout->addWidget(refreshBtn_);
     root->addWidget(navBar);
@@ -302,8 +327,101 @@ void FilePane::applyDirectoryEntries(const QString& path, std::vector<FileEntry>
     }
 
     model_->setEntries(std::move(entries), includeUp, parent);
+    updateBookmarkButtonState();
     updateFooterSummary();
     emit tabTitleChanged(endpoint_.label());
+}
+
+void FilePane::updateBookmarkButtonState() {
+    if (!starBtn_) return;
+    const bool bookmarked = sessionStore_ && !currentPath_.isEmpty() &&
+                            sessionStore_->hasBookmark(endpoint_, currentPath_);
+    starBtn_->setText(bookmarked ? QStringLiteral("★") : QStringLiteral("☆"));
+    starBtn_->setObjectName(bookmarked ? QStringLiteral("starBtnActive") : QString());
+    starBtn_->setToolTip(bookmarked
+                             ? QStringLiteral("Current path is bookmarked (click to remove)")
+                             : QStringLiteral("Bookmark current path for this host (Ctrl+D)"));
+    starBtn_->style()->unpolish(starBtn_);
+    starBtn_->style()->polish(starBtn_);
+}
+
+void FilePane::bookmarkPath(const QString& path, const QString& suggestedName) {
+    if (!sessionStore_ || path.trimmed().isEmpty()) return;
+    QString defaultLabel = suggestedName.trimmed();
+    if (defaultLabel.isEmpty()) {
+        defaultLabel = baseNameAnyPath(path);
+        if (defaultLabel.isEmpty()) defaultLabel = path;
+    }
+
+    bool ok = false;
+    const QString label = QInputDialog::getText(
+        this,
+        QStringLiteral("Bookmark Path (%1)").arg(endpoint_.label()),
+        QStringLiteral("Bookmark name for:\n%1").arg(path),
+        QLineEdit::Normal,
+        defaultLabel,
+        &ok);
+    if (!ok) return;
+
+    PathBookmark bm;
+    bm.name = label.trimmed().isEmpty() ? defaultLabel : label.trimmed();
+    bm.path = path;
+    sessionStore_->addBookmark(endpoint_, bm);
+    updateBookmarkButtonState();
+    emit logMessage(QStringLiteral("Bookmarked [%1] %2 → %3")
+                        .arg(endpoint_.label(), bm.name, bm.path));
+}
+
+void FilePane::toggleBookmarkCurrentPath() {
+    if (!sessionStore_ || currentPath_.isEmpty()) return;
+    if (sessionStore_->hasBookmark(endpoint_, currentPath_)) {
+        sessionStore_->removeBookmark(endpoint_, currentPath_);
+        updateBookmarkButtonState();
+        emit logMessage(QStringLiteral("Removed bookmark [%1] %2")
+                            .arg(endpoint_.label(), currentPath_));
+    } else {
+        bookmarkPath(currentPath_);
+    }
+}
+
+void FilePane::showBookmarksMenu() {
+    QMenu menu(this);
+    if (sessionStore_) {
+        const auto bms = sessionStore_->bookmarksFor(endpoint_);
+        if (bms.empty()) {
+            QAction* empty = menu.addAction(QStringLiteral("(No bookmarks for %1 yet)").arg(endpoint_.label()));
+            empty->setEnabled(false);
+        } else {
+            for (const PathBookmark& bm : bms) {
+                QAction* a = menu.addAction(
+                    IconCache::folderIcon(),
+                    QStringLiteral("%1   (%2)").arg(bm.displayName(), bm.path));
+                a->setToolTip(bm.path);
+                connect(a, &QAction::triggered, this, [this, p = bm.path]() {
+                    navigateTo(p, true);
+                });
+            }
+        }
+    }
+    menu.addSeparator();
+    QAction* addCur = menu.addAction(QStringLiteral("★ Bookmark Current Path...\tCtrl+D"));
+    addCur->setEnabled(sessionStore_ != nullptr && !currentPath_.isEmpty());
+    connect(addCur, &QAction::triggered, this, [this]() { bookmarkPath(currentPath_); });
+
+    QAction* mgr = menu.addAction(QStringLiteral("Manage Bookmarks..."));
+    mgr->setEnabled(sessionStore_ != nullptr);
+    connect(mgr, &QAction::triggered, this, &FilePane::openBookmarkManager);
+
+    menu.exec(bookmarksBtn_->mapToGlobal(QPoint(0, bookmarksBtn_->height())));
+}
+
+void FilePane::openBookmarkManager() {
+    if (!sessionStore_) return;
+    BookmarkManagerDialog dlg(sessionStore_, endpoint_, currentPath_, this);
+    if (dlg.exec() == QDialog::Accepted && !dlg.chosenPath().isEmpty()) {
+        navigateTo(dlg.chosenPath(), true);
+    }
+    updateBookmarkButtonState();
 }
 
 void FilePane::reconnect() {
@@ -691,6 +809,12 @@ void FilePane::showContextMenu(const QPoint& pos) {
             connect(actChmod, &QAction::triggered, this, &FilePane::chmodSelected);
         }
         menu.addSeparator();
+        if (sel.size() == 1 && sel.front().isDir && sessionStore_) {
+            QAction* actBmDir = menu.addAction(QStringLiteral("★ Bookmark This Folder..."));
+            connect(actBmDir, &QAction::triggered, this, [this, entry = sel.front()]() {
+                bookmarkPath(entry.fullPath, entry.name);
+            });
+        }
         QAction* actCopyPath = menu.addAction(QStringLiteral("Copy Path"));
         connect(actCopyPath, &QAction::triggered, this, [sel]() {
             QStringList ps;

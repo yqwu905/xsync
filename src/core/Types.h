@@ -60,6 +60,16 @@ enum class EndpointType {
     Remote = 1
 };
 
+struct PathBookmark {
+    QString name;
+    QString path;
+
+    bool isValid() const { return !path.trimmed().isEmpty(); }
+    QString displayName() const {
+        return name.trimmed().isEmpty() ? path : name;
+    }
+};
+
 struct EndpointCapabilities {
     bool probed = false;
     bool hasRsync = false;
@@ -91,6 +101,9 @@ struct SessionProfile {
     RemoteToRemotePolicy r2rPolicy = RemoteToRemotePolicy::DirectThenRelay;
     bool forwardAgent = true;
     int keepAliveSec = 30;
+
+    // Saved path bookmarks for this host
+    std::vector<PathBookmark> bookmarks;
 
     // Optional JumpHost / Bastion
     bool useJumpHost = false;
@@ -175,16 +188,20 @@ enum class TransferStatus {
     Running = 2,
     Completed = 3,
     Failed = 4,
-    Canceled = 5
+    Canceled = 5,
+    Paused = 6,
+    Scanning = 7
 };
 
 struct TransferTask {
     uint64_t id = 0;
+    uint64_t batchId = 0;     // 0 for standalone file; >0 if child of a directory TransferBatch
     EndpointSpec sourceEndpoint;
     EndpointSpec destEndpoint;
     QString sourcePath;       // Full source file or directory path
     QString destDir;          // Target directory on destination endpoint
     QString itemName;         // File or folder base name
+    QString relativePath;     // Relative path inside directory batch (e.g. "sub/weights.bin")
     bool isDir = false;
     bool deleteSourceAfter = false;  // For Ctrl+X (Cut & Paste)
     uint64_t totalBytes = 0;
@@ -196,9 +213,40 @@ struct TransferTask {
     TransferProtocol activeProtocol = TransferProtocol::Sftp;
     TransferStatus status = TransferStatus::Queued;
     QString statusMessage;
+    QString errorMessage;     // Detailed error for this specific file (when status == Failed)
     QDateTime createdAt;
     QDateTime finishedAt;
     QString targetPaneId;     // Optional pane ID to auto-refresh upon completion
+};
+
+// Represents a directory transfer group containing individual child TransferTask files,
+// mirroring Xftp's folder transfer tracking (file counts, per-file pause/delete/errors).
+struct TransferBatch {
+    uint64_t id = 0;
+    EndpointSpec sourceEndpoint;
+    EndpointSpec destEndpoint;
+    QString sourcePath;
+    QString destDir;
+    QString itemName;
+    bool deleteSourceAfter = false;
+    bool isScanning = true;
+    int totalFiles = 0;
+    int completedFiles = 0;
+    int failedFiles = 0;
+    int pausedFiles = 0;
+    int canceledFiles = 0;
+    int activeFiles = 0;
+    uint64_t totalBytes = 0;
+    uint64_t transferredBytes = 0;
+    double speedBytesPerSec = 0.0;
+    int progressPercent = 0;
+    TransferProtocol activeProtocol = TransferProtocol::Sftp;
+    TransferStatus status = TransferStatus::Scanning;
+    QString statusMessage;
+    QString errorMessage;
+    QDateTime createdAt;
+    QDateTime finishedAt;
+    QString targetPaneId;
 };
 
 // Formatting & path helpers
@@ -220,11 +268,13 @@ QString baseNameAnyPath(const QString& path);
 
 }  // namespace xsync
 
+Q_DECLARE_METATYPE(xsync::PathBookmark)
 Q_DECLARE_METATYPE(xsync::FileEntry)
 Q_DECLARE_METATYPE(std::vector<xsync::FileEntry>)
 Q_DECLARE_METATYPE(xsync::EndpointCapabilities)
 Q_DECLARE_METATYPE(xsync::EndpointSpec)
 Q_DECLARE_METATYPE(xsync::SessionProfile)
 Q_DECLARE_METATYPE(xsync::TransferTask)
+Q_DECLARE_METATYPE(xsync::TransferBatch)
 Q_DECLARE_METATYPE(xsync::TransferProtocol)
 Q_DECLARE_METATYPE(xsync::TransferStatus)

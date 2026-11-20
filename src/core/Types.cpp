@@ -119,6 +119,8 @@ QString transferStatusToString(TransferStatus s) {
         case TransferStatus::Completed: return QStringLiteral("Completed");
         case TransferStatus::Failed: return QStringLiteral("Failed");
         case TransferStatus::Canceled: return QStringLiteral("Canceled");
+        case TransferStatus::Paused: return QStringLiteral("Paused");
+        case TransferStatus::Scanning: return QStringLiteral("Scanning...");
     }
     return QStringLiteral("Unknown");
 }

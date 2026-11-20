@@ -82,14 +82,17 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     auto* keyLay = new QHBoxLayout(keyRow);
     keyLay->setContentsMargins(0, 0, 0, 0);
     keyPathEdit_ = new QLineEdit(keyRow);
-    keyPathEdit_->setPlaceholderText(QStringLiteral("~/.ssh/id_ed25519"));
-    keyBrowseBtn_ = new QPushButton(QStringLiteral("Browse..."), keyRow);
-    connect(keyBrowseBtn_, &QPushButton::clicked, this, [this]() {
-        const QString p = QFileDialog::getOpenFileName(
-            this, QStringLiteral("Select SSH Private Key"),
-            QDir::homePath() + QStringLiteral("/.ssh"));
-        if (!p.isEmpty()) keyPathEdit_->setText(p);
+    keyPathEdit_->setPlaceholderText(QStringLiteral("~/.ssh/id_ed25519 (pick file or type path)"));
+    connect(keyPathEdit_, &QLineEdit::textEdited, this, [this](const QString& txt) {
+        if (!txt.trimmed().isEmpty() &&
+            static_cast<AuthType>(authCombo_->currentData().toInt()) != AuthType::PrivateKey) {
+            authCombo_->setCurrentIndex(authCombo_->findData(static_cast<int>(AuthType::PrivateKey)));
+        }
     });
+    keyBrowseBtn_ = new QPushButton(QStringLiteral("Browse..."), keyRow);
+    keyBrowseBtn_->setObjectName(QStringLiteral("keyBrowseBtn"));
+    keyBrowseBtn_->setAutoDefault(false);
+    connect(keyBrowseBtn_, &QPushButton::clicked, this, [this]() { browsePrivateKey(false); });
     keyLay->addWidget(keyPathEdit_, 1);
     keyLay->addWidget(keyBrowseBtn_);
 
@@ -167,7 +170,18 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     jumpAuthCombo_->addItem(QStringLiteral("SSH Agent"), static_cast<int>(AuthType::SshAgent));
     jumpPasswordEdit_ = new QLineEdit(jumpContainer_);
     jumpPasswordEdit_->setEchoMode(QLineEdit::Password);
-    jumpKeyEdit_ = new QLineEdit(jumpContainer_);
+
+    auto* jumpKeyRow = new QWidget(jumpContainer_);
+    auto* jumpKeyLay = new QHBoxLayout(jumpKeyRow);
+    jumpKeyLay->setContentsMargins(0, 0, 0, 0);
+    jumpKeyEdit_ = new QLineEdit(jumpKeyRow);
+    jumpKeyEdit_->setPlaceholderText(QStringLiteral("~/.ssh/id_ed25519"));
+    jumpKeyBrowseBtn_ = new QPushButton(QStringLiteral("Browse..."), jumpKeyRow);
+    jumpKeyBrowseBtn_->setAutoDefault(false);
+    connect(jumpKeyBrowseBtn_, &QPushButton::clicked, this, [this]() { browsePrivateKey(true); });
+    jumpKeyLay->addWidget(jumpKeyEdit_, 1);
+    jumpKeyLay->addWidget(jumpKeyBrowseBtn_);
+
     jumpPassphraseEdit_ = new QLineEdit(jumpContainer_);
     jumpPassphraseEdit_->setEchoMode(QLineEdit::Password);
 
@@ -176,7 +190,7 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     jumpForm->addRow(QStringLiteral("Jump Username:"), jumpUserEdit_);
     jumpForm->addRow(QStringLiteral("Jump Auth:"), jumpAuthCombo_);
     jumpForm->addRow(QStringLiteral("Jump Password:"), jumpPasswordEdit_);
-    jumpForm->addRow(QStringLiteral("Jump Key Path:"), jumpKeyEdit_);
+    jumpForm->addRow(QStringLiteral("Jump Key Path:"), jumpKeyRow);
     jumpForm->addRow(QStringLiteral("Jump Passphrase:"), jumpPassphraseEdit_);
     jumpRoot->addWidget(jumpContainer_);
     jumpRoot->addStretch(1);
@@ -187,6 +201,7 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     // Live Test Connection row
     auto* testRow = new QHBoxLayout();
     testBtn_ = new QPushButton(QStringLiteral("Test & Probe Protocols"), this);
+    testBtn_->setAutoDefault(false);
     connect(testBtn_, &QPushButton::clicked, this, &SessionEditDialog::testConnection);
     testResultLabel_ = new QLabel(this);
     testResultLabel_->setWordWrap(true);
@@ -230,12 +245,41 @@ void SessionEditDialog::populateFrom(const SessionProfile& p) {
     updateJumpVisibility();
 }
 
+void SessionEditDialog::browsePrivateKey(bool forJumpHost) {
+    QLineEdit* targetEdit = forJumpHost ? jumpKeyEdit_ : keyPathEdit_;
+    QString startDir = QDir::homePath() + QStringLiteral("/.ssh");
+    if (!targetEdit->text().trimmed().isEmpty()) {
+        QFileInfo existing(targetEdit->text().trimmed());
+        if (existing.dir().exists()) startDir = existing.dir().absolutePath();
+    }
+    if (!QDir(startDir).exists()) {
+        startDir = QDir::homePath();
+    }
+
+    const QString picked = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Select SSH Private Key"),
+        startDir,
+        QStringLiteral("All Files (*);;PEM / Key Files (*.pem *.key *.ppk *.pub)"));
+    if (picked.isEmpty()) return;
+
+    targetEdit->setText(picked);
+    if (forJumpHost) {
+        jumpAuthCombo_->setCurrentIndex(jumpAuthCombo_->findData(static_cast<int>(AuthType::PrivateKey)));
+    } else {
+        authCombo_->setCurrentIndex(authCombo_->findData(static_cast<int>(AuthType::PrivateKey)));
+        updateAuthVisibility();
+    }
+}
+
 void SessionEditDialog::updateAuthVisibility() {
     const auto auth = static_cast<AuthType>(authCombo_->currentData().toInt());
     passwordEdit_->setEnabled(auth == AuthType::Password);
-    keyPathEdit_->setEnabled(auth == AuthType::PrivateKey);
-    keyBrowseBtn_->setEnabled(auth == AuthType::PrivateKey);
-    passphraseEdit_->setEnabled(auth == AuthType::PrivateKey);
+    // Keep Private Key field & Browse button ALWAYS clickable so users can pick a key
+    // directly without needing to switch the Auth Method combo first.
+    keyPathEdit_->setEnabled(true);
+    keyBrowseBtn_->setEnabled(true);
+    passphraseEdit_->setEnabled(auth == AuthType::PrivateKey || !keyPathEdit_->text().trimmed().isEmpty());
 }
 
 void SessionEditDialog::updateJumpVisibility() {

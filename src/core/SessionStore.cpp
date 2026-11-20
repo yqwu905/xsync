@@ -1,5 +1,6 @@
 #include "core/SessionStore.h"
 
+#include "core/FileSystemBackend.h"
 #include "core/SecretStore.h"
 #include "core/ShellUtils.h"
 
@@ -16,6 +17,32 @@
 namespace xsync {
 
 namespace {
+
+QJsonArray bookmarksToJson(const std::vector<PathBookmark>& bms) {
+    QJsonArray arr;
+    for (const PathBookmark& bm : bms) {
+        if (!bm.isValid()) continue;
+        QJsonObject o;
+        o[QStringLiteral("name")] = bm.name;
+        o[QStringLiteral("path")] = bm.path;
+        arr.append(o);
+    }
+    return arr;
+}
+
+std::vector<PathBookmark> bookmarksFromJson(const QJsonArray& arr) {
+    std::vector<PathBookmark> out;
+    out.reserve(static_cast<size_t>(arr.size()));
+    for (const QJsonValue& v : arr) {
+        if (!v.isObject()) continue;
+        const QJsonObject o = v.toObject();
+        PathBookmark bm;
+        bm.name = o.value(QStringLiteral("name")).toString();
+        bm.path = o.value(QStringLiteral("path")).toString();
+        if (bm.isValid()) out.push_back(std::move(bm));
+    }
+    return out;
+}
 
 QJsonObject profileToJson(const SessionProfile& p) {
     QJsonObject o;
@@ -39,6 +66,10 @@ QJsonObject profileToJson(const SessionProfile& p) {
     o[QStringLiteral("r2rPolicy")] = static_cast<int>(p.r2rPolicy);
     o[QStringLiteral("forwardAgent")] = p.forwardAgent;
     o[QStringLiteral("keepAliveSec")] = p.keepAliveSec;
+
+    if (!p.bookmarks.empty()) {
+        o[QStringLiteral("bookmarks")] = bookmarksToJson(p.bookmarks);
+    }
 
     o[QStringLiteral("useJumpHost")] = p.useJumpHost;
     if (p.useJumpHost) {
@@ -78,6 +109,7 @@ SessionProfile profileFromJson(const QJsonObject& o) {
         qBound(0, o.value(QStringLiteral("r2rPolicy")).toInt(0), 2));
     p.forwardAgent = o.value(QStringLiteral("forwardAgent")).toBool(true);
     p.keepAliveSec = qBound(0, o.value(QStringLiteral("keepAliveSec")).toInt(30), 600);
+    p.bookmarks = bookmarksFromJson(o.value(QStringLiteral("bookmarks")).toArray());
 
     p.useJumpHost = o.value(QStringLiteral("useJumpHost")).toBool(false);
     p.jumpHost = o.value(QStringLiteral("jumpHost")).toString();
@@ -102,6 +134,7 @@ SessionStore::SessionStore(const QString& storagePath, QObject* parent)
 
 bool SessionStore::load() {
     sessions_.clear();
+    extraBookmarks_.clear();
     QFile f(storagePath_);
     if (!f.exists()) {
         return true;
@@ -113,7 +146,8 @@ bool SessionStore::load() {
     f.close();
     if (!doc.isObject()) return false;
 
-    const QJsonArray arr = doc.object().value(QStringLiteral("sessions")).toArray();
+    const QJsonObject root = doc.object();
+    const QJsonArray arr = root.value(QStringLiteral("sessions")).toArray();
     sessions_.reserve(static_cast<size_t>(arr.size()));
     for (const QJsonValue& v : arr) {
         if (v.isObject()) {
@@ -123,6 +157,17 @@ bool SessionStore::load() {
             }
         }
     }
+
+    const QJsonObject extraObj = root.value(QStringLiteral("hostBookmarks")).toObject();
+    for (auto it = extraObj.begin(); it != extraObj.end(); ++it) {
+        if (it.value().isArray()) {
+            auto bms = bookmarksFromJson(it.value().toArray());
+            if (!bms.empty()) {
+                extraBookmarks_.insert(it.key(), std::move(bms));
+            }
+        }
+    }
+
     emit sessionsChanged();
     return true;
 }
@@ -135,9 +180,20 @@ bool SessionStore::save() const {
     for (const SessionProfile& p : sessions_) {
         arr.append(profileToJson(p));
     }
+
+    QJsonObject extraObj;
+    for (auto it = extraBookmarks_.begin(); it != extraBookmarks_.end(); ++it) {
+        if (!it.value().empty()) {
+            extraObj[it.key()] = bookmarksToJson(it.value());
+        }
+    }
+
     QJsonObject root;
-    root[QStringLiteral("version")] = 1;
+    root[QStringLiteral("version")] = 2;
     root[QStringLiteral("sessions")] = arr;
+    if (!extraObj.isEmpty()) {
+        root[QStringLiteral("hostBookmarks")] = extraObj;
+    }
 
     QSaveFile f(storagePath_);
     if (!f.open(QIODevice::WriteOnly)) {
@@ -176,9 +232,29 @@ void SessionStore::upsertSession(const SessionProfile& profile) {
         copy.group = QStringLiteral("Default");
     }
 
+    // Absorb any Quick Connect bookmarks saved under user@host:port
+    const QString key = EndpointSpec::remote(copy).cacheKey();
+    if (extraBookmarks_.contains(key)) {
+        const auto quickBms = extraBookmarks_.take(key);
+        for (const PathBookmark& bm : quickBms) {
+            bool dup = false;
+            for (const PathBookmark& ex : copy.bookmarks) {
+                if (ex.path == bm.path) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) copy.bookmarks.push_back(bm);
+        }
+    }
+
     bool updated = false;
     for (SessionProfile& existing : sessions_) {
         if (existing.id == copy.id) {
+            // Preserve existing bookmarks if caller didn't alter them
+            if (copy.bookmarks.empty() && !existing.bookmarks.empty()) {
+                copy.bookmarks = existing.bookmarks;
+            }
             existing = copy;
             updated = true;
             break;
@@ -235,6 +311,109 @@ int SessionStore::importFromSshConfig(const QString& sshConfigPath) {
         emit sessionsChanged();
     }
     return added;
+}
+
+int SessionStore::findMatchingSessionIndex(const EndpointSpec& ep) const {
+    if (ep.isLocal()) return -1;
+    // Prefer exact session ID match first
+    if (!ep.session.id.isEmpty()) {
+        for (size_t i = 0; i < sessions_.size(); ++i) {
+            if (sessions_[i].id == ep.session.id) return static_cast<int>(i);
+        }
+    }
+    // Fallback to matching username@host:port
+    for (size_t i = 0; i < sessions_.size(); ++i) {
+        const SessionProfile& s = sessions_[i];
+        if (s.host == ep.session.host && s.port == ep.session.port &&
+            s.username == ep.session.username) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+QString SessionStore::normalizeBookmarkPath(const EndpointSpec& ep, const QString& path) {
+    return ep.isLocal() ? LocalFileSystem::normalizePath(path) : normalizeRemotePath(path);
+}
+
+std::vector<PathBookmark> SessionStore::bookmarksFor(const EndpointSpec& ep) const {
+    const int idx = findMatchingSessionIndex(ep);
+    if (idx >= 0) {
+        return sessions_[static_cast<size_t>(idx)].bookmarks;
+    }
+    return extraBookmarks_.value(ep.cacheKey());
+}
+
+bool SessionStore::hasBookmark(const EndpointSpec& ep, const QString& path) const {
+    const QString norm = normalizeBookmarkPath(ep, path);
+    const auto list = bookmarksFor(ep);
+    for (const PathBookmark& bm : list) {
+        if (normalizeBookmarkPath(ep, bm.path) == norm) return true;
+    }
+    return false;
+}
+
+void SessionStore::addBookmark(const EndpointSpec& ep, const PathBookmark& bookmark) {
+    if (!bookmark.isValid()) return;
+    PathBookmark clean = bookmark;
+    clean.path = normalizeBookmarkPath(ep, clean.path);
+    if (clean.name.trimmed().isEmpty()) {
+        clean.name = baseNameAnyPath(clean.path);
+        if (clean.name.isEmpty()) clean.name = clean.path;
+    }
+
+    auto list = bookmarksFor(ep);
+    bool replaced = false;
+    for (PathBookmark& existing : list) {
+        if (normalizeBookmarkPath(ep, existing.path) == clean.path) {
+            existing.name = clean.name;
+            existing.path = clean.path;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) {
+        list.push_back(std::move(clean));
+    }
+    setBookmarks(ep, list);
+}
+
+bool SessionStore::removeBookmark(const EndpointSpec& ep, const QString& path) {
+    const QString norm = normalizeBookmarkPath(ep, path);
+    auto list = bookmarksFor(ep);
+    const size_t before = list.size();
+    for (auto it = list.begin(); it != list.end();) {
+        if (normalizeBookmarkPath(ep, it->path) == norm) {
+            it = list.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (list.size() == before) return false;
+    setBookmarks(ep, list);
+    return true;
+}
+
+void SessionStore::setBookmarks(const EndpointSpec& ep, const std::vector<PathBookmark>& bookmarks) {
+    std::vector<PathBookmark> cleaned;
+    cleaned.reserve(bookmarks.size());
+    for (const PathBookmark& bm : bookmarks) {
+        if (!bm.isValid()) continue;
+        PathBookmark c = bm;
+        c.path = normalizeBookmarkPath(ep, c.path);
+        if (c.name.trimmed().isEmpty()) c.name = c.path;
+        cleaned.push_back(std::move(c));
+    }
+
+    const int idx = findMatchingSessionIndex(ep);
+    if (idx >= 0) {
+        sessions_[static_cast<size_t>(idx)].bookmarks = std::move(cleaned);
+    } else {
+        if (cleaned.empty()) extraBookmarks_.remove(ep.cacheKey());
+        else extraBookmarks_.insert(ep.cacheKey(), std::move(cleaned));
+    }
+    save();
+    emit bookmarksChanged(ep.cacheKey());
 }
 
 }  // namespace xsync

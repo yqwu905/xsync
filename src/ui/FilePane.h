@@ -22,6 +22,7 @@ namespace xsync {
 
 class FileListModel;
 class FileSortFilterProxyModel;
+class SessionStore;
 class SshClient;
 class TransferManager;
 
@@ -33,6 +34,7 @@ class FilePane : public QWidget {
 public:
     explicit FilePane(const EndpointSpec& endpoint,
                       TransferManager* transferMgr,
+                      SessionStore* sessionStore = nullptr,
                       const QString& initialPath = {},
                       QWidget* parent = nullptr);
     ~FilePane() override;
@@ -52,6 +54,12 @@ public:
     void reconnect();
     void setShowHidden(bool show);
     void focusFileList();
+
+    // Per-host path bookmarks
+    void bookmarkPath(const QString& path, const QString& suggestedName = {});
+    void toggleBookmarkCurrentPath();
+    void showBookmarksMenu();
+    void openBookmarkManager();
 
     // Operations invoked from context menu or toolbar
     void createNewFolder();
@@ -84,6 +92,7 @@ private:
     void stopRemoteWorker();
     void postRemoteOp(std::function<void(SshClient&)> op);
     void updateHeaderUi(const QString& statusText, bool isError = false);
+    void updateBookmarkButtonState();
     void updateFooterSummary();
     void showContextMenu(const QPoint& pos);
     void onRowDoubleClicked(const QModelIndex& proxyIdx);
@@ -92,6 +101,7 @@ private:
     QString paneId_;
     EndpointSpec endpoint_;
     TransferManager* transferMgr_ = nullptr;
+    SessionStore* sessionStore_ = nullptr;
     EndpointCapabilities capabilities_;
 
     QString currentPath_;
@@ -111,6 +121,8 @@ private:
     QToolButton* upBtn_ = nullptr;
     QToolButton* homeBtn_ = nullptr;
     QLineEdit* pathEdit_ = nullptr;
+    QToolButton* starBtn_ = nullptr;
+    QToolButton* bookmarksBtn_ = nullptr;
     QLineEdit* filterEdit_ = nullptr;
     QToolButton* refreshBtn_ = nullptr;
 

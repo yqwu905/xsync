@@ -2,27 +2,33 @@
 
 #include "core/Types.h"
 
-#include <QAbstractTableModel>
+#include <QAbstractItemModel>
+#include <QHash>
+#include <QSortFilterProxyModel>
 #include <QStyledItemDelegate>
 #include <QWidget>
 #include <vector>
 
+class QComboBox;
 class QPushButton;
 class QSpinBox;
-class QTableView;
+class QTreeView;
 
 namespace xsync {
 
 class TransferManager;
 
-// Pure model-view transfer queue (NO QProgressBar per row -> zero widget leaks!).
-class TransferQueueModel : public QAbstractTableModel {
+// Pure 2-level hierarchical Model/View for the Transfer Queue:
+//   - Top-level rows: Directory TransferBatch groups AND standalone single-file TransferTasks
+//   - Child rows under a TransferBatch: each individual file inside that directory
+// Zero per-row QProgressBar child widgets -> flat memory usage even with thousands of files.
+class TransferQueueModel : public QAbstractItemModel {
     Q_OBJECT
 public:
     enum Column {
-        ColId = 0,
-        ColName = 1,
-        ColDirection = 2,
+        ColItem = 0,
+        ColFiles = 1,
+        ColRoute = 2,
         ColProtocol = 3,
         ColProgress = 4,
         ColSize = 5,
@@ -32,23 +38,69 @@ public:
         ColCount = 9
     };
 
+    enum CustomRole {
+        RoleProgressPercent = Qt::UserRole + 1,
+        RoleStatusInt = Qt::UserRole + 2,
+        RoleIsBatch = Qt::UserRole + 3,
+        RoleItemId = Qt::UserRole + 4,
+        RoleErrorText = Qt::UserRole + 5
+    };
+
     explicit TransferQueueModel(TransferManager* manager, QObject* parent = nullptr);
 
+    QModelIndex index(int row, int column, const QModelIndex& parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex& child) const override;
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
     int columnCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
 
-    uint64_t taskIdAt(int row) const;
-    const TransferTask* taskAt(int row) const;
+    bool isBatchIndex(const QModelIndex& idx) const;
+    uint64_t idForIndex(const QModelIndex& idx) const;
+    const TransferBatch* batchForIndex(const QModelIndex& idx) const;
+    const TransferTask* taskForIndex(const QModelIndex& idx) const;
 
 private:
-    int findRow(uint64_t taskId) const;
+    struct TopEntry {
+        bool isBatch = false;
+        uint64_t id = 0;
+    };
+
+    int findTopRow(bool isBatch, uint64_t id) const;
+    int findChildRow(uint64_t batchId, uint64_t taskId) const;
+
+    void onBatchAdded(const TransferBatch& b);
+    void onBatchUpdated(const TransferBatch& b);
+    void onBatchRemoved(uint64_t batchId);
     void onTaskAdded(const TransferTask& t);
     void onTaskUpdated(const TransferTask& t);
     void onTaskRemoved(uint64_t taskId);
 
-    std::vector<TransferTask> rows_;
+    std::vector<TopEntry> topItems_;
+    QHash<uint64_t, TransferBatch> batches_;
+    QHash<uint64_t, TransferTask> tasks_;
+    QHash<uint64_t, std::vector<uint64_t>> batchChildren_;
+};
+
+class TransferQueueFilterProxy : public QSortFilterProxyModel {
+    Q_OBJECT
+public:
+    enum FilterMode {
+        FilterAll = 0,
+        FilterActive = 1,
+        FilterPaused = 2,
+        FilterFailed = 3
+    };
+
+    explicit TransferQueueFilterProxy(QObject* parent = nullptr);
+    void setFilterMode(FilterMode mode);
+
+protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
+
+private:
+    bool matchesStatus(TransferStatus st) const;
+    FilterMode mode_ = FilterAll;
 };
 
 class ProgressBarDelegate : public QStyledItemDelegate {
@@ -66,13 +118,26 @@ public:
     explicit TransferQueueWidget(TransferManager* manager, QWidget* parent = nullptr);
 
 private:
+    struct SelectionSet {
+        std::vector<uint64_t> batchIds;
+        std::vector<uint64_t> taskIds;
+    };
+
+    SelectionSet collectSelection() const;
+    void pauseSelected();
+    void resumeSelected();
     void cancelSelected();
-    void retrySelected();
+    void removeSelected();
+    void retrySelectedOrFailed();
+    void showErrorDetails(const QModelIndex& proxyIdx);
+    void showContextMenu(const QPoint& pos);
 
     TransferManager* manager_ = nullptr;
     TransferQueueModel* model_ = nullptr;
-    QTableView* view_ = nullptr;
-    QPushButton* pauseBtn_ = nullptr;
+    TransferQueueFilterProxy* proxy_ = nullptr;
+    QTreeView* view_ = nullptr;
+    QPushButton* pauseAllBtn_ = nullptr;
+    QComboBox* filterCombo_ = nullptr;
     QSpinBox* concurSpin_ = nullptr;
 };
 

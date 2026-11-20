@@ -674,10 +674,41 @@ bool runRemoteRelay(TransferTask& task,
 
 }  // namespace
 
+SshClient* WorkerSessionCache::acquire(const EndpointSpec& ep,
+                                       QString& errorOut,
+                                       const std::atomic<bool>* cancelFlag,
+                                       bool slotB) {
+    QString& key = slotB ? keyB : keyA;
+    std::unique_ptr<SshClient>& slot = slotB ? clientB : clientA;
+    const QString wantedKey = ep.cacheKey();
+
+    if (slot && key == wantedKey && slot->isConnected()) {
+        return slot.get();
+    }
+    slot.reset();
+    key.clear();
+
+    auto fresh = std::make_unique<SshClient>();
+    if (!fresh->connectToHost(ep.session, errorOut, cancelFlag)) {
+        return nullptr;
+    }
+    key = wantedKey;
+    slot = std::move(fresh);
+    return slot.get();
+}
+
+void WorkerSessionCache::clear() {
+    clientA.reset();
+    keyA.clear();
+    clientB.reset();
+    keyB.clear();
+}
+
 bool TransferWorker::execute(TransferTask& task,
                              const std::atomic<bool>& cancelFlag,
                              const TransferCallbacks& cb,
-                             QString& errorOut) {
+                             QString& errorOut,
+                             WorkerSessionCache* sessionCache) {
     ThrottledProgress prog(cb);
 
     auto emitState = [&](TransferStatus st, TransferProtocol proto, const QString& msg) {
@@ -716,10 +747,20 @@ bool TransferWorker::execute(TransferTask& task,
         const bool isUpload = task.sourceEndpoint.isLocal();
         const EndpointSpec& remoteEp = isUpload ? task.destEndpoint : task.sourceEndpoint;
 
-        SshClient remoteClient;
-        if (!remoteClient.connectToHost(remoteEp.session, errorOut, &cancelFlag)) {
+        std::unique_ptr<SshClient> ownedClient;
+        SshClient* remoteClientPtr = nullptr;
+        if (sessionCache) {
+            remoteClientPtr = sessionCache->acquire(remoteEp, errorOut, &cancelFlag, false);
+        } else {
+            ownedClient = std::make_unique<SshClient>();
+            if (ownedClient->connectToHost(remoteEp.session, errorOut, &cancelFlag)) {
+                remoteClientPtr = ownedClient.get();
+            }
+        }
+        if (!remoteClientPtr) {
             return false;
         }
+        SshClient& remoteClient = *remoteClientPtr;
 
         EndpointCapabilities localCaps = cb.getOrProbeCaps
                                              ? cb.getOrProbeCaps(EndpointSpec::local(), nullptr)
@@ -785,6 +826,10 @@ bool TransferWorker::execute(TransferTask& task,
                 errorOut = QStringLiteral("Canceled");
                 return false;
             }
+            // If cached connection dropped mid-transfer, drop it so next retry reconnects cleanly
+            if (sessionCache && !remoteClient.isConnected()) {
+                sessionCache->clear();
+            }
             if (i + 1 < attempts.size() && cb.onLog) {
                 cb.onLog(QStringLiteral("[Task #%1] %2 failed (%3); degrading to %4")
                              .arg(task.id)
@@ -803,16 +848,39 @@ bool TransferWorker::execute(TransferTask& task,
     emitState(TransferStatus::Negotiating, TransferProtocol::RemoteDirectRsync,
               QStringLiteral("Connecting to both remotes..."));
 
-    SshClient srcClient;
-    if (!srcClient.connectToHost(task.sourceEndpoint.session, errorOut, &cancelFlag)) {
+    std::unique_ptr<SshClient> ownedSrc;
+    std::unique_ptr<SshClient> ownedDst;
+    SshClient* srcPtr = nullptr;
+    SshClient* dstPtr = nullptr;
+
+    if (sessionCache) {
+        srcPtr = sessionCache->acquire(task.sourceEndpoint, errorOut, &cancelFlag, false);
+    } else {
+        ownedSrc = std::make_unique<SshClient>();
+        if (ownedSrc->connectToHost(task.sourceEndpoint.session, errorOut, &cancelFlag)) {
+            srcPtr = ownedSrc.get();
+        }
+    }
+    if (!srcPtr) {
         errorOut = QStringLiteral("Source remote failed: %1").arg(errorOut);
         return false;
     }
-    SshClient dstClient;
-    if (!dstClient.connectToHost(task.destEndpoint.session, errorOut, &cancelFlag)) {
+
+    if (sessionCache) {
+        dstPtr = sessionCache->acquire(task.destEndpoint, errorOut, &cancelFlag, true);
+    } else {
+        ownedDst = std::make_unique<SshClient>();
+        if (ownedDst->connectToHost(task.destEndpoint.session, errorOut, &cancelFlag)) {
+            dstPtr = ownedDst.get();
+        }
+    }
+    if (!dstPtr) {
         errorOut = QStringLiteral("Destination remote failed: %1").arg(errorOut);
         return false;
     }
+
+    SshClient& srcClient = *srcPtr;
+    SshClient& dstClient = *dstPtr;
 
     EndpointCapabilities srcCaps = cb.getOrProbeCaps
                                        ? cb.getOrProbeCaps(task.sourceEndpoint, &srcClient)

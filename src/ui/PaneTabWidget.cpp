@@ -46,7 +46,7 @@ PaneTabWidget::PaneTabWidget(const QString& sideLabel,
 }
 
 FilePane* PaneTabWidget::openLocalTab(const QString& path) {
-    auto* pane = new FilePane(EndpointSpec::local(), transferMgr_, path, this);
+    auto* pane = new FilePane(EndpointSpec::local(), transferMgr_, sessionStore_, path, this);
     int idx = addTab(pane, IconCache::computerIcon(), QStringLiteral("Local"));
     setCurrentIndex(idx);
     connect(pane, &FilePane::tabTitleChanged, this, [this, pane](const QString& title) {
@@ -58,7 +58,7 @@ FilePane* PaneTabWidget::openLocalTab(const QString& path) {
 }
 
 FilePane* PaneTabWidget::openRemoteTab(const SessionProfile& profile, const QString& path) {
-    auto* pane = new FilePane(EndpointSpec::remote(profile), transferMgr_, path, this);
+    auto* pane = new FilePane(EndpointSpec::remote(profile), transferMgr_, sessionStore_, path, this);
     int idx = addTab(pane, IconCache::serverIcon(), profile.displayTitle());
     setTabToolTip(idx, profile.displayAddress());
     setCurrentIndex(idx);

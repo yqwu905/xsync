@@ -43,6 +43,16 @@ QPushButton:hover, QToolButton:hover {
     background-color: #f1f5f9;
     border-color: #94a3b8;
 }
+QPushButton:disabled, QToolButton:disabled {
+    background-color: #f1f5f9;
+    border-color: #e2e8f0;
+    color: #94a3b8;
+}
+QToolButton#starBtnActive {
+    color: #d97706;
+    border-color: #f59e0b;
+    background-color: #fef3c7;
+}
 QPushButton#primaryBtn {
     background-color: #2563eb;
     border-color: #1d4ed8;
@@ -59,6 +69,11 @@ QLineEdit, QComboBox, QSpinBox {
     padding: 4px 8px;
     color: #0f172a;
     selection-background-color: #2563eb;
+}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+    background-color: #f1f5f9;
+    border-color: #e2e8f0;
+    color: #94a3b8;
 }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
     border-color: #2563eb;

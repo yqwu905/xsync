@@ -27,6 +27,7 @@ private:
     void populateFrom(const SessionProfile& p);
     void updateAuthVisibility();
     void updateJumpVisibility();
+    void browsePrivateKey(bool forJumpHost);
     void testConnection();
     void accept() override;
 
@@ -57,6 +58,7 @@ private:
     QComboBox* jumpAuthCombo_ = nullptr;
     QLineEdit* jumpPasswordEdit_ = nullptr;
     QLineEdit* jumpKeyEdit_ = nullptr;
+    QPushButton* jumpKeyBrowseBtn_ = nullptr;
     QLineEdit* jumpPassphraseEdit_ = nullptr;
 
     QPushButton* testBtn_ = nullptr;

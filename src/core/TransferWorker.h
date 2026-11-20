@@ -5,10 +5,27 @@
 #include <QObject>
 #include <atomic>
 #include <functional>
+#include <memory>
 
 namespace xsync {
 
 class SshClient;
+
+// Per-worker-thread reusable SSH connection cache.
+// Keeps SFTP/SCP/Relay connections warm across consecutive files in a folder
+// transfer, then disconnects automatically via RAII when the worker goes idle.
+struct WorkerSessionCache {
+    QString keyA;
+    std::unique_ptr<SshClient> clientA;
+    QString keyB;
+    std::unique_ptr<SshClient> clientB;
+
+    SshClient* acquire(const EndpointSpec& ep,
+                       QString& errorOut,
+                       const std::atomic<bool>* cancelFlag,
+                       bool slotB = false);
+    void clear();
+};
 
 struct TransferCallbacks {
     std::function<void(TransferStatus status, TransferProtocol activeProto, const QString& msg)> onState;
@@ -25,7 +42,8 @@ public:
     static bool execute(TransferTask& task,
                         const std::atomic<bool>& cancelFlag,
                         const TransferCallbacks& cb,
-                        QString& errorOut);
+                        QString& errorOut,
+                        WorkerSessionCache* sessionCache = nullptr);
 };
 
 }  // namespace xsync
