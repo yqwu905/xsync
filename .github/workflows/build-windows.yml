@@ -58,17 +58,21 @@ jobs:
       - name: Configure & Build xsync.exe (Release)
         shell: pwsh
         run: |
+          $qtRoot = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
           cmake -S . -B build-win64 -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
+            -DCMAKE_PREFIX_PATH="$qtRoot" `
             -DOPENSSL_ROOT_DIR="$env:OPENSSL_ROOT_DIR" `
             -DXSYNC_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-win64 --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Unit, Transfer & Memory Stability Tests (Windows)
         shell: pwsh
         run: |
-          $env:PATH = "$env:Qt6_DIR\bin;$env:OPENSSL_ROOT_DIR\bin;$env:PATH"
+          $qtRoot = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
+          $env:PATH = "$qtRoot\bin;$env:OPENSSL_ROOT_DIR\bin;$env:PATH"
           $env:QT_QPA_PLATFORM = "windows"
           $env:QT_FORCE_STDERR_LOGGING = "1"
           ctest --test-dir build-win64 --output-on-failure -V
@@ -86,15 +90,17 @@ jobs:
       - name: Package Portable xsync.exe & Dependencies
         shell: pwsh
         run: |
+          $qtRoot = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
           New-Item -ItemType Directory -Force -Path dist\xsync | Out-Null
           Copy-Item build-win64\xsync.exe dist\xsync\xsync.exe
 
-          & "$env:Qt6_DIR\bin\windeployqt.exe" `
+          & "$qtRoot\bin\windeployqt.exe" `
             --release `
             --no-translations `
             --no-opengl-sw `
             --no-system-d3d-compiler `
             dist\xsync\xsync.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           # Bundle OpenSSL 3 runtime DLLs
           foreach ($dll in @("libcrypto-3-x64.dll", "libssl-3-x64.dll")) {
@@ -104,12 +110,12 @@ jobs:
           }
 
           # Bundle MSVC runtime DLLs for clean execution on fresh Windows machines
-          $vcRedist = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\*\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $vcRedist = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($vcRedist) {
             Copy-Item "$($vcRedist.FullName)\*.dll" dist\xsync\ -Force
           }
 
-          Compress-Archive -Path dist\xsync\* -DestinationPath dist\xsync-windows-x64-portable.zip
+          Compress-Archive -Path dist\xsync\* -DestinationPath dist\xsync-windows-x64-portable.zip -Force
           Get-ChildItem dist\xsync | Format-Table Name, Length
 
       - name: Build Windows Installer (xsync-windows-x64-setup.exe)
@@ -118,6 +124,7 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (Test-Path $iscc) {
             & $iscc scripts\installer.iss
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
             Write-Host "Inno Setup not present, skipping installer build."
           }
@@ -162,9 +169,10 @@ jobs:
 
       - name: Build & Test on Linux
         run: |
+          QT_PREFIX="${QT_ROOT_DIR:-$Qt6_DIR}"
           cmake -S . -B build-linux -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
             -DXSYNC_BUILD_TESTS=ON
           cmake --build build-linux -j"$(nproc)"
           QT_QPA_PLATFORM=offscreen ctest --test-dir build-linux --output-on-failure
