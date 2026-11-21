@@ -9,6 +9,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -21,6 +22,7 @@
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -71,7 +73,9 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     portSpin_ = new QSpinBox(connTab);
     portSpin_->setRange(1, 65535);
     portSpin_->setValue(22);
-    portSpin_->setFixedWidth(86);
+    portSpin_->ensurePolished();
+    portSpin_->setFixedWidth(
+        std::max(86, portSpin_->fontMetrics().horizontalAdvance(QStringLiteral("65535")) + 44));
 
     auto* hostRow = new QWidget(connTab);
     auto* hostLay = new QHBoxLayout(hostRow);
@@ -168,7 +172,9 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     keepAliveSpin_->setRange(0, 300);
     keepAliveSpin_->setSuffix(QStringLiteral(" sec"));
     keepAliveSpin_->setValue(30);
-    keepAliveSpin_->setFixedWidth(112);
+    keepAliveSpin_->ensurePolished();
+    keepAliveSpin_->setFixedWidth(
+        std::max(112, keepAliveSpin_->fontMetrics().horizontalAdvance(QStringLiteral("300 sec")) + 44));
 
     protoForm->addRow(QStringLiteral("Protocol Priority:"), protoCombo_);
     protoForm->addRow(QStringLiteral("Remote ↔ Remote:"), r2rCombo_);
@@ -199,7 +205,9 @@ void SessionEditDialog::setupUi(const QStringList& existingGroups) {
     jumpPortSpin_ = new QSpinBox(jumpContainer_);
     jumpPortSpin_->setRange(1, 65535);
     jumpPortSpin_->setValue(22);
-    jumpPortSpin_->setFixedWidth(86);
+    jumpPortSpin_->ensurePolished();
+    jumpPortSpin_->setFixedWidth(
+        std::max(86, jumpPortSpin_->fontMetrics().horizontalAdvance(QStringLiteral("65535")) + 44));
 
     auto* jumpHostRow = new QWidget(jumpContainer_);
     auto* jumpHostLay = new QHBoxLayout(jumpHostRow);

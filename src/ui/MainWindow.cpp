@@ -15,6 +15,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -32,6 +33,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <libssh2.h>
 
 namespace xsync {
@@ -215,7 +217,7 @@ void MainWindow::setupToolbar() {
 
     tb->addSeparator();
 
-    QAction* actTransfer = tb->addAction(IconCache::transferIcon(), QStringLiteral("Transfer Selected"));
+    QAction* actTransfer = tb->addAction(IconCache::transferIcon(), QStringLiteral("Transfer"));
     actTransfer->setToolTip(QStringLiteral("Transfer selected items to the opposite pane (Ctrl+Enter)"));
     connect(actTransfer, &QAction::triggered, this, &MainWindow::onTransferSelectedClicked);
 
@@ -226,6 +228,17 @@ void MainWindow::setupToolbar() {
     });
 
     tb->addSeparator();
+
+    auto fitComboWidth = [](QComboBox* combo, int floorWidth) {
+        combo->ensurePolished();
+        const QFontMetrics fm(combo->font());
+        int maxAdv = 0;
+        for (int i = 0; i < combo->count(); ++i) {
+            maxAdv = std::max(maxAdv, fm.horizontalAdvance(combo->itemText(i)));
+        }
+        // 38px chrome (2px border + 14px padding + 22px drop-down) + 14px breathing room
+        combo->setMinimumWidth(std::max(floorWidth, maxAdv + 52));
+    };
 
     auto* protoLbl = new QLabel(QStringLiteral("Protocol:"), tb);
     protoLbl->setObjectName(QStringLiteral("toolbarLabel"));
@@ -241,12 +254,13 @@ void MainWindow::setupToolbar() {
                              static_cast<int>(ProtocolPreference::Sftp));
     protoPrefCombo_->addItem(protocolPreferenceToString(ProtocolPreference::Scp),
                              static_cast<int>(ProtocolPreference::Scp));
-    protoPrefCombo_->setMinimumWidth(214);
+    fitComboWidth(protoPrefCombo_, 220);
     protoPrefCombo_->setToolTip(QStringLiteral("Default protocol negotiation priority"));
     tb->addWidget(protoPrefCombo_);
 
-    auto* r2rLbl = new QLabel(QStringLiteral("Remote ↔ Remote:"), tb);
+    auto* r2rLbl = new QLabel(QStringLiteral("R2R:"), tb);
     r2rLbl->setObjectName(QStringLiteral("toolbarLabel"));
+    r2rLbl->setToolTip(QStringLiteral("Routing strategy for Remote-to-Remote transfers"));
     tb->addWidget(r2rLbl);
 
     r2rPolicyCombo_ = new QComboBox(tb);
@@ -257,7 +271,7 @@ void MainWindow::setupToolbar() {
                              static_cast<int>(RemoteToRemotePolicy::RelayOnly));
     r2rPolicyCombo_->addItem(r2rPolicyToString(RemoteToRemotePolicy::DirectOnly),
                              static_cast<int>(RemoteToRemotePolicy::DirectOnly));
-    r2rPolicyCombo_->setMinimumWidth(176);
+    fitComboWidth(r2rPolicyCombo_, 182);
     r2rPolicyCombo_->setToolTip(QStringLiteral("Routing strategy for Remote-to-Remote transfers"));
     tb->addWidget(r2rPolicyCombo_);
 }
@@ -292,7 +306,9 @@ void MainWindow::setupQuickConnectBar() {
     qcPortSpin_->setObjectName(QStringLiteral("qcPortSpin"));
     qcPortSpin_->setRange(1, 65535);
     qcPortSpin_->setValue(22);
-    qcPortSpin_->setFixedWidth(78);
+    qcPortSpin_->ensurePolished();
+    qcPortSpin_->setFixedWidth(
+        std::max(86, qcPortSpin_->fontMetrics().horizontalAdvance(QStringLiteral("65535")) + 44));
     qcBar->addWidget(qcPortSpin_);
 
     auto* userLbl = new QLabel(QStringLiteral("User:"), qcBar);

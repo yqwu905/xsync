@@ -28,29 +28,17 @@ find_package(ZLIB QUIET)
 
 include(FetchContent)
 
-if(NOT ZLIB_FOUND)
-    message(STATUS "System ZLIB not found; fetching zlib 1.3.1 via FetchContent")
-    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(
-        zlib
-        URL https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(zlib)
-    if(TARGET zlibstatic AND NOT TARGET ZLIB::ZLIB)
-        add_library(ZLIB::ZLIB ALIAS zlibstatic)
-        set(ZLIB_INCLUDE_DIRS "${zlib_SOURCE_DIR}" "${zlib_BINARY_DIR}" CACHE PATH "" FORCE)
-        set(ZLIB_LIBRARIES zlibstatic CACHE STRING "" FORCE)
-        set(ZLIB_FOUND TRUE CACHE BOOL "" FORCE)
-    endif()
-endif()
-
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CRYPTO_BACKEND "OpenSSL" CACHE STRING "" FORCE)
-set(ENABLE_ZLIB_COMPRESSION ON CACHE BOOL "" FORCE)
+if(ZLIB_FOUND)
+    set(ENABLE_ZLIB_COMPRESSION ON CACHE BOOL "" FORCE)
+else()
+    message(STATUS "System ZLIB not found; building libssh2 without zlib compression")
+    set(ENABLE_ZLIB_COMPRESSION OFF CACHE BOOL "" FORCE)
+endif()
 set(CLEAR_MEMORY ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(

@@ -8,6 +8,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QEvent>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -578,7 +579,15 @@ TransferQueueWidget::TransferQueueWidget(TransferManager* manager, QWidget* pare
     filterCombo_->addItem(QStringLiteral("Show: Active"), static_cast<int>(TransferQueueFilterProxy::FilterActive));
     filterCombo_->addItem(QStringLiteral("Show: Paused"), static_cast<int>(TransferQueueFilterProxy::FilterPaused));
     filterCombo_->addItem(QStringLiteral("Show: Failed Only"), static_cast<int>(TransferQueueFilterProxy::FilterFailed));
-    filterCombo_->setMinimumWidth(160);
+    filterCombo_->ensurePolished();
+    {
+        int maxAdv = 0;
+        const QFontMetrics fm(filterCombo_->font());
+        for (int i = 0; i < filterCombo_->count(); ++i) {
+            maxAdv = std::max(maxAdv, fm.horizontalAdvance(filterCombo_->itemText(i)));
+        }
+        filterCombo_->setMinimumWidth(std::max(160, maxAdv + 52));
+    }
     ThemeManager::polishComboBox(filterCombo_);
 
     concurSpin_ = new QSpinBox(this);
@@ -586,7 +595,9 @@ TransferQueueWidget::TransferQueueWidget(TransferManager* manager, QWidget* pare
     concurSpin_->setRange(1, 8);
     concurSpin_->setValue(manager_ ? manager_->maxConcurrent() : 3);
     concurSpin_->setPrefix(QStringLiteral("Workers: "));
-    concurSpin_->setMinimumWidth(120);
+    concurSpin_->ensurePolished();
+    concurSpin_->setMinimumWidth(
+        std::max(120, concurSpin_->fontMetrics().horizontalAdvance(QStringLiteral("Workers: 8")) + 44));
     connect(concurSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int n) {
         if (manager_) manager_->setMaxConcurrent(n);
     });
