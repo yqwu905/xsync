@@ -331,13 +331,10 @@ void MainWindow::setupQuickConnectBar() {
     qcBar->addWidget(qcPassEdit_);
 
     auto* leftBtn = new QPushButton(QStringLiteral("Open Left"), qcBar);
-    leftBtn->setMinimumWidth(84);
     auto* rightBtn = new QPushButton(QStringLiteral("Open Right"), qcBar);
     rightBtn->setObjectName(QStringLiteral("primaryBtn"));
     rightBtn->setProperty("variant", QStringLiteral("primary"));
-    rightBtn->setMinimumWidth(98);
     auto* saveBtn = new QPushButton(QStringLiteral("Save Host"), qcBar);
-    saveBtn->setMinimumWidth(86);
 
     connect(leftBtn, &QPushButton::clicked, this, [this]() { openQuickConnect(false); });
     connect(rightBtn, &QPushButton::clicked, this, [this]() { openQuickConnect(true); });
@@ -347,6 +344,15 @@ void MainWindow::setupQuickConnectBar() {
     qcBar->addWidget(leftBtn);
     qcBar->addWidget(rightBtn);
     qcBar->addWidget(saveBtn);
+
+    auto fitQuickBtnWidth = [](QPushButton* btn, int floorWidth) {
+        btn->ensurePolished();
+        const int adv = btn->fontMetrics().horizontalAdvance(btn->text());
+        btn->setMinimumWidth(std::max(floorWidth, adv + 26));
+    };
+    fitQuickBtnWidth(leftBtn, 84);
+    fitQuickBtnWidth(rightBtn, 104);
+    fitQuickBtnWidth(saveBtn, 86);
 }
 
 void MainWindow::setupCentralWorkspace() {
