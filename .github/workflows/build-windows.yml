@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$env:Qt6_DIR\bin;$env:OPENSSL_ROOT_DIR\bin;$env:PATH"
-          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QPA_PLATFORM = "windows"
           $env:QT_FORCE_STDERR_LOGGING = "1"
           ctest --test-dir build-win64 --output-on-failure -V
           if ($LASTEXITCODE -ne 0) {
