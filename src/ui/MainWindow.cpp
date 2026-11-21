@@ -648,7 +648,7 @@ void MainWindow::showAboutDialog() {
         this,
         QStringLiteral("About xsync"),
         QStringLiteral(
-            "<h3>xsync 1.0.0</h3>"
+            "<h3>xsync 1.0.1</h3>"
             "<p>Lightweight, leak-free native C++17 / Qt6 alternative to Xftp.</p>"
             "<ul>"
             "<li><b>Protocols:</b> Auto-negotiates <b>rsync</b> (if both sides have it) → <b>SFTP</b> → <b>SCP</b></li>"

@@ -91,11 +91,13 @@ jobs:
         shell: pwsh
         run: |
           $qtRoot = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
+          Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path dist\xsync | Out-Null
           Copy-Item build-win64\xsync.exe dist\xsync\xsync.exe
 
           & "$qtRoot\bin\windeployqt.exe" `
             --release `
+            --no-compiler-runtime `
             --no-translations `
             --no-opengl-sw `
             --no-system-d3d-compiler `
@@ -109,11 +111,60 @@ jobs:
             if (Test-Path $src) { Copy-Item $src "dist\xsync\$dll" -Force }
           }
 
-          # Bundle MSVC runtime DLLs for clean execution on fresh Windows machines
-          $vcRedist = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($vcRedist) {
-            Copy-Item "$($vcRedist.FullName)\*.dll" dist\xsync\ -Force
+          # Bundle EXACT matching MSVC runtime DLLs from the active compiler toolset
+          # (Avoids loading an older pre-14.40 msvcp140.dll which crashes on 14.40+ std::mutex)
+          $vcRedist = $null
+          if ($env:VCToolsRedistDir) {
+            $vcRedist = Get-ChildItem (Join-Path $env:VCToolsRedistDir "x64\Microsoft.VC14*.CRT") -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
           }
+          if (-not $vcRedist) {
+            $vcRedist = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" -Directory -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1
+          }
+          if (-not $vcRedist) {
+            throw "Failed to locate matching MSVC CRT redistributable directory!"
+          }
+          Write-Host "Bundling MSVC CRT from: $($vcRedist.FullName)"
+          Copy-Item "$($vcRedist.FullName)\*.dll" dist\xsync\ -Force
+
+          $crtInfo = (Get-Item dist\xsync\msvcp140.dll).VersionInfo
+          $crtMajorMinor = [version]"$($crtInfo.FileMajorPart).$($crtInfo.FileMinorPart)"
+          $toolParts = ($env:VCToolsVersion -split '\.')
+          $toolMajorMinor = [version]"$($toolParts[0]).$($toolParts[1])"
+          Write-Host "Bundled msvcp140.dll version: $($crtInfo.FileVersion) ($crtMajorMinor) vs VCToolsVersion: $env:VCToolsVersion ($toolMajorMinor)"
+          if ($crtMajorMinor -lt $toolMajorMinor) {
+            throw "Bundled msvcp140.dll ($crtMajorMinor) is older than compiler toolset ($toolMajorMinor)!"
+          }
+
+          # Pin Qt plugin discovery strictly to the local installation folder
+          Set-Content -Path dist\xsync\qt.conf -Value "[Paths]`r`nPlugins = .`r`n" -Encoding Ascii
+
+          # Standalone clean-environment smoke test of the exact packaged xsync.exe
+          Write-Host "Running isolated standalone smoke test on dist\xsync\xsync.exe..."
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = (Resolve-Path dist\xsync\xsync.exe).Path
+          $psi.WorkingDirectory = (Resolve-Path dist\xsync).Path
+          $smokePng = Join-Path (Resolve-Path dist).Path "smoke_test.png"
+          $psi.Arguments = "--screenshot `"$smokePng`""
+          $psi.UseShellExecute = $false
+          $psi.Environment["PATH"] = "C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem"
+          foreach ($v in @("QT_ROOT_DIR", "Qt6_DIR", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QT_QPA_PLATFORM", "OPENSSL_ROOT_DIR")) {
+            $psi.Environment.Remove($v) | Out-Null
+          }
+          $proc = [System.Diagnostics.Process]::Start($psi)
+          if (-not $proc.WaitForExit(30000)) {
+            $proc.Kill()
+            throw "Packaged dist\xsync\xsync.exe timed out during standalone smoke test!"
+          }
+          Write-Host "Packaged xsync.exe exited with code: $($proc.ExitCode)"
+          if ($proc.ExitCode -ne 0) {
+            throw "Packaged dist\xsync\xsync.exe crashed/failed with exit code $($proc.ExitCode)!"
+          }
+          if (-not (Test-Path $smokePng) -or (Get-Item $smokePng).Length -lt 10240) {
+            throw "Packaged dist\xsync\xsync.exe did not render a valid window screenshot!"
+          }
+          Write-Host "Standalone smoke test PASSED! Screenshot size: $((Get-Item $smokePng).Length) bytes"
+          Remove-Item $smokePng -Force
 
           Compress-Archive -Path dist\xsync\* -DestinationPath dist\xsync-windows-x64-portable.zip -Force
           Get-ChildItem dist\xsync | Format-Table Name, Length
