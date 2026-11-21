@@ -1,4 +1,5 @@
 #include "core/SessionStore.h"
+#include "core/SshClient.h"
 #include "core/TransferManager.h"
 #include "core/Types.h"
 #include "ui/BookmarkManagerDialog.h"
@@ -52,6 +53,7 @@
 #include <QtTest/QtTest>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <vector>
 
@@ -1118,11 +1120,20 @@ private:
         transferMgr.shutdown();
     }
 
+    std::unique_ptr<SshGlobalInit> sshInit_;
+
 private slots:
     void initTestCase() {
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        sshInit_ = std::make_unique<SshGlobalInit>();
         QStandardPaths::setTestModeEnabled(true);
         ThemeManager::initialize(*qApp);
         ThemeManager::applyTheme(true);
+    }
+
+    void cleanupTestCase() {
+        sshInit_.reset();
     }
 
     void testStyleHintsAndIconAssets() {

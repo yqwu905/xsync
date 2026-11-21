@@ -70,7 +70,18 @@ jobs:
         run: |
           $env:PATH = "$env:Qt6_DIR\bin;$env:OPENSSL_ROOT_DIR\bin;$env:PATH"
           $env:QT_QPA_PLATFORM = "offscreen"
-          ctest --test-dir build-win64 --output-on-failure
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          ctest --test-dir build-win64 --output-on-failure -V
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            Write-Host "CTest failed with exit code $code; capturing test_ui diagnostic log..."
+            & .\build-win64\test_ui.exe -v1 -o build-win64\test_ui_diag.log,txt
+            Write-Host "test_ui.exe direct exit code: $LASTEXITCODE"
+            if (Test-Path build-win64\test_ui_diag.log) {
+              Get-Content build-win64\test_ui_diag.log
+            }
+            exit $code
+          }
 
       - name: Package Portable xsync.exe & Dependencies
         shell: pwsh
