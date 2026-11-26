@@ -1,6 +1,6 @@
 ; Inno Setup script for xsync Windows x64 Installer
 #define MyAppName "xsync"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "xsync"
 #define MyAppExeName "xsync.exe"
 

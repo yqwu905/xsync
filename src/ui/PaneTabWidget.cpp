@@ -4,13 +4,84 @@
 #include "ui/FilePane.h"
 #include "ui/IconCache.h"
 
+#include <QApplication>
+#include <QDrag>
+#include <QDragEnterEvent>
 #include <QHBoxLayout>
 #include <QMenu>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QTabBar>
 #include <QToolButton>
 #include <QtAlgorithms>
 
 namespace xsync {
+
+namespace {
+
+const QString kPaneTabMimeType = QStringLiteral("application/x-xsync-pane-tab");
+
+class PaneTabBar : public QTabBar {
+public:
+    explicit PaneTabBar(PaneTabWidget* tabs) : QTabBar(tabs), tabs_(tabs) {}
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            pressPosition_ = event->position().toPoint();
+            pressedPane_ = qobject_cast<FilePane*>(tabs_->widget(tabAt(pressPosition_)));
+            dragPixmap_ = {};
+        }
+        QTabBar::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        const QPoint position = event->position().toPoint();
+        if (pressedPane_ && event->buttons().testFlag(Qt::LeftButton) &&
+            (position - pressPosition_).manhattanLength() >= QApplication::startDragDistance()) {
+            if (dragPixmap_.isNull()) {
+                const QRect tab = tabRect(tabs_->indexOf(pressedPane_)).intersected(rect());
+                dragPixmap_ = grab(tab);
+                dragHotSpot_ = pressPosition_ - tab.topLeft();
+            }
+
+            if (!tabs_->rect().contains(mapTo(tabs_, position))) {
+                auto* mime = new QMimeData;
+                mime->setData(kPaneTabMimeType, pressedPane_->paneId().toUtf8());
+                auto* drag = new QDrag(this);
+                drag->setMimeData(mime);
+                drag->setPixmap(dragPixmap_);
+                drag->setHotSpot(dragHotSpot_);
+
+                // End QTabBar's native reorder gesture before starting the cross-pane drag.
+                QMouseEvent release(QEvent::MouseButtonRelease, event->position(),
+                                    event->globalPosition(), Qt::LeftButton,
+                                    event->buttons() & ~Qt::LeftButton, event->modifiers());
+                mouseReleaseEvent(&release);
+                drag->exec(Qt::MoveAction);
+                return;
+            }
+        }
+        QTabBar::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            pressedPane_.clear();
+            dragPixmap_ = {};
+        }
+        QTabBar::mouseReleaseEvent(event);
+    }
+
+private:
+    PaneTabWidget* tabs_;
+    QPointer<FilePane> pressedPane_;
+    QPoint pressPosition_;
+    QPixmap dragPixmap_;
+    QPoint dragHotSpot_;
+};
+
+}  // namespace
 
 PaneTabWidget::PaneTabWidget(const QString& sideLabel,
                              SessionStore* sessionStore,
@@ -20,6 +91,8 @@ PaneTabWidget::PaneTabWidget(const QString& sideLabel,
       sideLabel_(sideLabel),
       sessionStore_(sessionStore),
       transferMgr_(transferMgr) {
+    setTabBar(new PaneTabBar(this));
+    setAcceptDrops(true);
     setTabsClosable(true);
     setMovable(true);
     setDocumentMode(true);
@@ -71,10 +144,7 @@ FilePane* PaneTabWidget::openLocalTab(const QString& path) {
     auto* pane = new FilePane(EndpointSpec::local(), transferMgr_, sessionStore_, path, this);
     int idx = addTab(pane, IconCache::computerIcon(), QStringLiteral("Local"));
     setCurrentIndex(idx);
-    connect(pane, &FilePane::tabTitleChanged, this, [this, pane](const QString& title) {
-        int i = indexOf(pane);
-        if (i >= 0) setTabText(i, title);
-    });
+    connectTabTitle(pane);
     emit paneCreated(pane);
     return pane;
 }
@@ -84,12 +154,80 @@ FilePane* PaneTabWidget::openRemoteTab(const SessionProfile& profile, const QStr
     int idx = addTab(pane, IconCache::serverIcon(), profile.displayTitle());
     setTabToolTip(idx, profile.displayAddress());
     setCurrentIndex(idx);
+    connectTabTitle(pane);
+    emit paneCreated(pane);
+    return pane;
+}
+
+void PaneTabWidget::connectTabTitle(FilePane* pane) {
     connect(pane, &FilePane::tabTitleChanged, this, [this, pane](const QString& title) {
         int i = indexOf(pane);
         if (i >= 0) setTabText(i, title);
     });
-    emit paneCreated(pane);
-    return pane;
+}
+
+void PaneTabWidget::setTabTransferPeer(PaneTabWidget* peer) {
+    tabTransferPeer_ = peer;
+}
+
+FilePane* PaneTabWidget::draggedPeerPane(const QDropEvent* event) const {
+    if (!tabTransferPeer_ || !event->possibleActions().testFlag(Qt::MoveAction) ||
+        !event->mimeData()->hasFormat(kPaneTabMimeType)) {
+        return nullptr;
+    }
+    return tabTransferPeer_->findPaneById(QString::fromUtf8(event->mimeData()->data(kPaneTabMimeType)));
+}
+
+void PaneTabWidget::dragEnterEvent(QDragEnterEvent* event) {
+    dragMoveEvent(event);
+}
+
+void PaneTabWidget::dragMoveEvent(QDragMoveEvent* event) {
+    if (draggedPeerPane(event)) {
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+    } else {
+        event->ignore();
+    }
+}
+
+int PaneTabWidget::tabInsertionIndex(const QPoint& position) const {
+    const QPoint barPosition = tabBar()->mapFrom(this, position);
+    if (!tabBar()->rect().contains(barPosition)) return count();
+
+    const int index = tabBar()->tabAt(barPosition);
+    if (index < 0) return count();
+
+    const bool rightHalf = barPosition.x() > tabBar()->tabRect(index).center().x();
+    return index + (rightHalf != isRightToLeft());
+}
+
+void PaneTabWidget::dropEvent(QDropEvent* event) {
+    auto* pane = draggedPeerPane(event);
+    if (!pane) {
+        event->ignore();
+        return;
+    }
+
+    auto* source = tabTransferPeer_.data();
+    const int sourceIndex = source->indexOf(pane);
+    const QString title = source->tabText(sourceIndex);
+    const QIcon icon = source->tabIcon(sourceIndex);
+    const QString toolTip = source->tabToolTip(sourceIndex);
+    const int destIndex = tabInsertionIndex(event->position().toPoint());
+
+    // Reparent the existing page, keeping its file model and any live SSH connection.
+    source->removeTab(sourceIndex);
+    disconnect(pane, &FilePane::tabTitleChanged, source, nullptr);
+    const int inserted = insertTab(destIndex, pane, icon, title);
+    setTabToolTip(inserted, toolTip);
+    connectTabTitle(pane);
+    setCurrentIndex(inserted);
+    if (source->count() == 0) source->openLocalTab();
+    pane->focusFileList();
+
+    event->setDropAction(Qt::MoveAction);
+    event->accept();
 }
 
 FilePane* PaneTabWidget::currentFilePane() const {

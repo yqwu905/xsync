@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("xsync"));
     app.setOrganizationName(QStringLiteral("xsync"));
-    app.setApplicationVersion(QStringLiteral("1.0.1"));
+    app.setApplicationVersion(QStringLiteral("1.0.2"));
     xsync::ThemeManager::initialize(app);
 
     qRegisterMetaType<xsync::PathBookmark>("xsync::PathBookmark");

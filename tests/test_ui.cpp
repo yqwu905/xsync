@@ -21,6 +21,7 @@
 #include <QCompleter>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDragEnterEvent>
 #include <QFile>
 #include <QFontMetrics>
 #include <QFrame>
@@ -31,6 +32,7 @@
 #include <QMap>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
@@ -1134,6 +1136,80 @@ private slots:
 
     void cleanupTestCase() {
         sshInit_.reset();
+    }
+
+    void testDragTabsBetweenPanes() {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        SessionStore store(tmp.filePath(QStringLiteral("sessions.json")));
+        MainWindow win(&store, nullptr, {});
+        win.show();
+        QCoreApplication::processEvents();
+
+        auto* left = win.leftTabs();
+        auto* right = win.rightTabs();
+        auto* originalLeft = left->currentFilePane();
+        auto* originalRight = right->currentFilePane();
+        auto* local = left->openLocalTab(tmp.path());
+        auto* localTable = local->findChild<FileTableView*>();
+        QVERIFY(localTable);
+        auto* originalModel = localTable->model();
+        const QString localPath = local->currentPath();
+
+        SessionProfile profile = SessionProfile::createNew();
+        profile.name = QStringLiteral("Tab drag test");
+        profile.host = QStringLiteral("127.0.0.1");
+        profile.port = 1;
+        profile.username = QStringLiteral("test");
+        auto* remote = right->openRemoteTab(profile);
+        const QString remoteId = remote->paneId();
+        const QString remoteToolTip = right->tabToolTip(right->indexOf(remote));
+        const qint64 remoteIcon = right->tabIcon(right->indexOf(remote)).cacheKey();
+
+        auto dragTab = [](FilePane* pane, QWidget* target, const QPoint& position) {
+            QMimeData mime;
+            mime.setData(QStringLiteral("application/x-xsync-pane-tab"), pane->paneId().toUtf8());
+            QDragEnterEvent enter(position, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(target, &enter);
+            if (!enter.isAccepted()) return false;
+
+            QDragMoveEvent move(position, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(target, &move);
+            QDropEvent drop(position, Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(target, &drop);
+            return move.isAccepted() && drop.isAccepted() && drop.dropAction() == Qt::MoveAction;
+        };
+
+        auto* rightBar = right->tabBar();
+        const QRect firstTab = rightBar->tabRect(0);
+        QVERIFY(dragTab(local, rightBar, QPoint(firstTab.left() + 1, firstTab.center().y())));
+        QCOMPARE(left->currentFilePane(), originalLeft);
+        QCOMPARE(left->count(), 1);
+        QCOMPARE(right->indexOf(local), 0);
+        QCOMPARE(right->indexOf(originalRight), 1);
+        QCOMPARE(right->currentFilePane(), local);
+        QCOMPARE(local->currentPath(), localPath);
+        QCOMPARE(localTable->model(), originalModel);
+
+        auto* leftTable = originalLeft->findChild<FileTableView*>();
+        QVERIFY(leftTable);
+        QVERIFY(dragTab(remote, leftTable->viewport(), leftTable->viewport()->rect().center()));
+        QCOMPARE(right->indexOf(remote), -1);
+        QCOMPARE(left->indexOf(remote), 1);
+        QCOMPARE(left->findPaneById(remoteId), remote);
+        QCOMPARE(left->currentFilePane(), remote);
+        QCOMPARE(left->tabToolTip(1), remoteToolTip);
+        QCOMPARE(left->tabIcon(1).cacheKey(), remoteIcon);
+        remote->tabTitleChanged(QStringLiteral("Updated remote title"));
+        QCOMPARE(left->tabText(1), QStringLiteral("Updated remote title"));
+
+        QVERIFY(!dragTab(remote, left, left->rect().center()));
+        QVERIFY(dragTab(local, left, left->rect().center()));
+        QVERIFY(dragTab(originalRight, left, left->rect().center()));
+        QCOMPARE(left->currentFilePane(), originalRight);
+        QCOMPARE(right->count(), 1);
+        QVERIFY(right->currentFilePane()->endpoint().isLocal());
+        QVERIFY(right->currentFilePane() != originalRight);
     }
 
     void testStyleHintsAndIconAssets() {

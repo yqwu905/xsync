@@ -369,6 +369,8 @@ void MainWindow::setupCentralWorkspace() {
     paneSplit->setHandleWidth(5);
     leftTabs_ = new PaneTabWidget(QStringLiteral("Left"), sessionStore_, transferMgr_, paneSplit);
     rightTabs_ = new PaneTabWidget(QStringLiteral("Right"), sessionStore_, transferMgr_, paneSplit);
+    leftTabs_->setTabTransferPeer(rightTabs_);
+    rightTabs_->setTabTransferPeer(leftTabs_);
 
     connect(leftTabs_, &PaneTabWidget::paneCreated, this, &MainWindow::wirePane);
     connect(rightTabs_, &PaneTabWidget::paneCreated, this, &MainWindow::wirePane);
@@ -648,7 +650,7 @@ void MainWindow::showAboutDialog() {
         this,
         QStringLiteral("About xsync"),
         QStringLiteral(
-            "<h3>xsync 1.0.1</h3>"
+            "<h3>xsync 1.0.2</h3>"
             "<p>Lightweight, leak-free native C++17 / Qt6 alternative to Xftp.</p>"
             "<ul>"
             "<li><b>Protocols:</b> Auto-negotiates <b>rsync</b> (if both sides have it) → <b>SFTP</b> → <b>SCP</b></li>"

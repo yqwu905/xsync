@@ -2,8 +2,10 @@
 
 #include "core/Types.h"
 
+#include <QPointer>
 #include <QTabWidget>
 
+class QDropEvent;
 class QMenu;
 class QToolButton;
 
@@ -27,16 +29,26 @@ public:
     FilePane* openRemoteTab(const SessionProfile& profile, const QString& path = {});
     FilePane* currentFilePane() const;
     FilePane* findPaneById(const QString& paneId) const;
+    void setTabTransferPeer(PaneTabWidget* peer);
 
 signals:
     void paneCreated(xsync::FilePane* pane);
     void openSessionManagerRequested(xsync::PaneTabWidget* targetSide);
 
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
 private:
+    void connectTabTitle(FilePane* pane);
+    FilePane* draggedPeerPane(const QDropEvent* event) const;
+    int tabInsertionIndex(const QPoint& position) const;
     void populateAddRemoteMenu();
     void onTabCloseRequested(int index);
 
     QString sideLabel_;
+    QPointer<PaneTabWidget> tabTransferPeer_;
     SessionStore* sessionStore_ = nullptr;
     TransferManager* transferMgr_ = nullptr;
     QToolButton* addLocalBtn_ = nullptr;
